@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)",
+      "Bash(ls \"S:/myproject/leeyez_kai/\"*.csproj*)",
+      "Bash(taskkill //IM leeyez2.exe //F)",
+      "Bash(taskkill //IM leeyez_kai.exe //F)",
+      "Bash(rm -rf bin obj)",
+      "Read(//c/Users/megam/AppData/Local/leeyez/**)"
+    ]
+  }
+}
