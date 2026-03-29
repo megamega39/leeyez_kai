@@ -16,93 +16,114 @@ namespace leeyez_kai
             _isNavigating = true;
             try
             {
-            _nav.NavigateTo(path);
-            _addressBox.Text = path;
-            UpdateNavButtons();
-            AutoSaveState();
+                _nav.NavigateTo(path);
+                _addressBox.Text = path;
+                UpdateNavButtons();
+                AutoSaveState();
+                RecordHistory(path);
 
-            var archiveSplit = SplitArchivePath(path);
-            if (archiveSplit != null)
-            {
-                LoadArchive(archiveSplit.Value.archive, archiveSplit.Value.entry.TrimStart('/'));
+                var archiveSplit = SplitArchivePath(path);
+                if (archiveSplit != null)
+                {
+                    NavigateToArchiveSplit(path, archiveSplit.Value);
+                    return;
+                }
+
+                var ext = FileExtensions.GetExt(path);
+                if (FileExtensions.IsArchive(ext) && File.Exists(path))
+                {
+                    NavigateToArchiveFile(path);
+                    return;
+                }
+
+                if (File.Exists(path) && FileExtensions.IsViewable(ext))
+                {
+                    NavigateToViewableFile(path);
+                    return;
+                }
+
+                if (Directory.Exists(path))
+                {
+                    NavigateToFolder(path);
+                }
+
                 if (!_skipSelectPath) _treeManager?.SelectPath(path);
-                return;
-            }
-
-            var ext = FileExtensions.GetExt(path);
-            if (FileExtensions.IsArchive(ext) && File.Exists(path))
-            {
-                // デバウンス: 高速切替時は最後の書庫だけ開く
-                _pendingArchivePath = path;
-                _pendingSkipSelectPath = _skipSelectPath; // デバウンス用に保持
-                if (_archiveDebounce == null)
-                {
-                    _archiveDebounce = new System.Windows.Forms.Timer { Interval = 200 };
-                    _archiveDebounce.Tick += (s2, e2) =>
-                    {
-                        _archiveDebounce.Stop();
-                        if (_pendingArchivePath != null)
-                        {
-                            _skipSelectPath = _pendingSkipSelectPath;
-                            OpenArchiveInline(_pendingArchivePath);
-                            _skipSelectPath = false;
-                        }
-                    };
-                }
-                _archiveDebounce.Stop();
-                _archiveDebounce.Start();
-                return;
-            }
-
-            // 画像/動画/音声ファイルを直接開く（お気に入りからのファイル選択等）
-            if (File.Exists(path) && FileExtensions.IsViewable(ext))
-            {
-                var dir = Path.GetDirectoryName(path);
-                if (dir != null)
-                {
-                    _currentArchivePath = null;
-                    _archiveEntries = null;
-                    _fileListManager?.LoadFolder(dir);
-                    _folderWatcher?.Watch(dir);
-                    UpdateViewableFiles();
-                    _statusLeft.Text = path;
-
-                    // 該当ファイルを表示
-                    int idx = _viewableFiles.FindIndex(f => f.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
-                    if (idx >= 0)
-                    {
-                        _currentFileIndex = idx;
-                        UpdatePageLabel();
-                        ShowCurrentFile();
-                        SyncFileListSelection(idx);
-                    }
-                    if (!_skipSelectPath) _treeManager?.SelectPath(dir);
-                }
-                return;
-            }
-
-            if (Directory.Exists(path))
-            {
-                _currentArchivePath = null;
-                _archiveEntries = null;
-                _archiveStreamCache.Clear();
-                _fileListManager?.LoadFolder(path);
-                _folderWatcher?.Watch(path);
-                UpdateViewableFiles();
-                _statusLeft.Text = path;
-
-                if (_viewableFiles.Count == 0)
-                {
-                    _imageViewer.Clear();
-                    _mediaPlayer.Stop();
-                    _mediaPlayer.Visible = false;
-                    _imageViewer.Visible = true;
-                }
-            }
-
-            if (!_skipSelectPath) _treeManager?.SelectPath(path);
             }
             finally { _isNavigating = false; }
+        }
+
+        /// <summary>書庫内パス（archive!entry）へのナビゲーション</summary>
+        private void NavigateToArchiveSplit(string path, (string archive, string entry) split)
+        {
+            LoadArchive(split.archive, split.entry.TrimStart('/'));
+            if (!_skipSelectPath) _treeManager?.SelectPath(path);
+        }
+
+        /// <summary>書庫ファイルへのナビゲーション（デバウンス付き）</summary>
+        private void NavigateToArchiveFile(string path)
+        {
+            _pendingArchivePath = path;
+            _pendingSkipSelectPath = _skipSelectPath;
+            if (_archiveDebounce == null)
+            {
+                _archiveDebounce = new System.Windows.Forms.Timer { Interval = 200 };
+                _archiveDebounce.Tick += (s2, e2) =>
+                {
+                    _archiveDebounce.Stop();
+                    if (_pendingArchivePath != null)
+                    {
+                        _skipSelectPath = _pendingSkipSelectPath;
+                        OpenArchiveInline(_pendingArchivePath);
+                        _skipSelectPath = false;
+                    }
+                };
+            }
+            _archiveDebounce.Stop();
+            _archiveDebounce.Start();
+        }
+
+        /// <summary>画像/動画/音声ファイルを直接開く</summary>
+        private void NavigateToViewableFile(string path)
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (dir == null) return;
+
+            _currentArchivePath = null;
+            _archiveEntries = null;
+            _fileListManager?.LoadFolder(dir);
+            _folderWatcher?.Watch(dir);
+            UpdateViewableFiles();
+            _statusLeft.Text = path;
+
+            int idx = _viewableFiles.FindIndex(f => f.FullPath.Equals(path, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+            {
+                _currentFileIndex = idx;
+                UpdatePageLabel();
+                ShowCurrentFile();
+                SyncFileListSelection(idx);
+            }
+            if (!_skipSelectPath) _treeManager?.SelectPath(dir);
+        }
+
+        /// <summary>フォルダへのナビゲーション</summary>
+        private void NavigateToFolder(string path)
+        {
+            _currentArchivePath = null;
+            _archiveEntries = null;
+            ClearStreamCache();
+            _fileListManager?.LoadFolder(path);
+            _folderWatcher?.Watch(path);
+            UpdateViewableFiles();
+            _statusLeft.Text = path;
+
+            if (_viewableFiles.Count == 0)
+            {
+                _imageViewer.Clear();
+                _mediaPlayer.Stop();
+                _mediaPlayer.Visible = false;
+                _imageViewer.Visible = true;
+            }
         }
 
         private void GoBack()
@@ -161,7 +182,7 @@ namespace leeyez_kai
             {
                 _currentArchivePath = null;
                 _archiveEntries = null;
-                _archiveStreamCache.Clear();
+                ClearStreamCache();
                 _fileListManager?.LoadFolder(path);
                 _folderWatcher?.Watch(path);
                 if (!_skipSelectPath) _treeManager?.SelectPath(path);

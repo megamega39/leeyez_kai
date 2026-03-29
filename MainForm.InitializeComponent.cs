@@ -52,6 +52,7 @@ namespace leeyez_kai
             _btnRefresh = CreateNavButton("\uE72C", "更新 (F5)", iconFont, 18f);
             _btnHoverPreview = CreateNavButton("\uE7B3", "ホバープレビュー", iconFont, 18f);
             _btnBookshelf = CreateNavButton("\uE82D", "本棚", iconFont, 18f);
+            _btnHistory = CreateNavButton("\uE81C", "履歴", iconFont, 18f);
             _btnListView = CreateNavButton("\uE8FD", "リスト表示", iconFont, 18f);
             _btnGridView = CreateNavButton("\uE80A", "グリッド表示", iconFont, 18f);
             _btnSettings = CreateNavButton("\uE713", "設定", iconFont, 18f);
@@ -60,7 +61,7 @@ namespace leeyez_kai
             _navBar.Items.AddRange(new ToolStripItem[] {
                 _btnBack, _btnForward, _btnUp, _btnRefresh,
                 new ToolStripSeparator(),
-                _btnHoverPreview, _btnBookshelf,
+                _btnHoverPreview, _btnBookshelf, _btnHistory,
                 new ToolStripSeparator(),
                 _btnListView, _btnGridView,
                 new ToolStripSeparator(),
@@ -115,6 +116,23 @@ namespace leeyez_kai
             _folderTree = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Yu Gothic UI", 9f) };
             _bookshelfTree = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Yu Gothic UI", 9f), Visible = false };
 
+            // 履歴ツールバー（履歴モード時に表示）
+            _historyToolbar = new Panel
+            {
+                Dock = DockStyle.Top, Height = 28, Visible = false,
+                BackColor = Color.FromArgb(0xF0, 0xF0, 0xF0), Padding = new Padding(2)
+            };
+            var histIcon = new Label { Text = "\uE81C", AutoSize = true, Location = new Point(4, 3), Font = new Font(iconFont, 10f) };
+            var histLabel = new Label { Text = "履歴", AutoSize = true, Location = new Point(30, 5), Font = new Font("Yu Gothic UI", 9f) };
+            var histBtnClear = new Button { Text = "全削除", FlatStyle = FlatStyle.Flat, Size = new Size(52, 22), Location = new Point(72, 3), Font = new Font("Yu Gothic UI", 8f) };
+            histBtnClear.FlatAppearance.BorderSize = 1;
+            histBtnClear.Click += (s, e) => ClearAllHistory();
+            _historyToolbar.Controls.AddRange(new Control[] { histIcon, histLabel, histBtnClear });
+
+            _historyList = new ListView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Yu Gothic UI", 9f), Visible = false };
+
+            _btnHistory.Click += (s, e) => ToggleHistory();
+
             // 本棚ツールバー（本棚モード時に表示）
             _bookshelfToolbar = new Panel
             {
@@ -146,7 +164,9 @@ namespace leeyez_kai
             // Fill は最初に追加、Top は後に追加
             _sidebarSplit.Panel1.Controls.Add(_folderTree);      // Fill（通常時表示）
             _sidebarSplit.Panel1.Controls.Add(_bookshelfTree);   // Fill（本棚時表示）
+            _sidebarSplit.Panel1.Controls.Add(_historyList);     // Fill（履歴時表示）
             _sidebarSplit.Panel1.Controls.Add(_bookshelfToolbar); // Top（本棚時表示）
+            _sidebarSplit.Panel1.Controls.Add(_historyToolbar);  // Top（履歴時表示）
             _sidebarSplit.Panel1.Controls.Add(folderLabel);       // Top（常に表示）
             _sidebarSplit.Panel2.Controls.Add(_fileList);
             _sidebarSplit.Panel2.Controls.Add(_virtualGrid);

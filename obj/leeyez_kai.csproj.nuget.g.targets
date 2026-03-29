@@ -1,7 +1,0 @@
-﻿<?xml version="1.0" encoding="utf-8" standalone="no"?>
-<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <ImportGroup Condition=" '$(ExcludeRestorePackageImports)' != 'true' ">
-    <Import Project="$(NuGetPackageRoot)sevenzipextractor\1.0.17\build\SevenZipExtractor.targets" Condition="Exists('$(NuGetPackageRoot)sevenzipextractor\1.0.17\build\SevenZipExtractor.targets')" />
-    <Import Project="$(NuGetPackageRoot)7z.libs\24.9.0\build\netcoreapp\7z.Libs.targets" Condition="Exists('$(NuGetPackageRoot)7z.libs\24.9.0\build\netcoreapp\7z.Libs.targets')" />
-  </ImportGroup>
-</Project>

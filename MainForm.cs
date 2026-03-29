@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -26,8 +27,12 @@ namespace leeyez_kai
         private List<ArchiveEntryInfo>? _archiveEntries;
         private string? _currentArchivePath;
         private readonly Dictionary<string, List<ArchiveEntryInfo>> _archiveEntryCache = new();
+        private readonly List<string> _archiveEntryCacheOrder = new();
+        private const int MaxArchiveEntryCacheSize = 20;
         // 書庫内ファイルのStreamキャッシュ（展開済みバイト列）
-        private readonly Dictionary<string, byte[]> _archiveStreamCache = new();
+        private readonly ConcurrentDictionary<string, byte[]> _archiveStreamCache = new();
+        private long _archiveStreamCacheBytes;
+        private const long MaxArchiveStreamCacheBytes = 20 * 1024 * 1024; // 20MB
 
         // ── ビューアー状態 ──
         private List<FileItem> _viewableFiles = new();
@@ -43,6 +48,7 @@ namespace leeyez_kai
         // ── 高速化 ──
         private System.Windows.Forms.Timer? _debounceTimer;
         private int _pendingFileIndex = -1;
+        private int _navDirection = 1; // プリフェッチ方向予測用
         private CancellationTokenSource? _prefetchCts;
 
         // ── UIコントロール ──
@@ -85,6 +91,9 @@ namespace leeyez_kai
         private FileItem? _hoverItem;
         private bool _hoverPreviewEnabled;
 
+        // 状態キャッシュ
+        private AppState? _cachedState;
+
         // 設定
         private AppSettings _appSettings = AppSettings.Load();
         private readonly ShortcutManager _shortcutManager = new();
@@ -96,6 +105,9 @@ namespace leeyez_kai
         private ToolStripButton _btnBookshelf = null!;
         private Label _sidebarLabel = null!;
         private Panel _bookshelfToolbar = null!;
+
+        // 履歴ボタン（フィールドはMainForm.History.csで定義）
+        private ToolStripButton _btnHistory = null!;
 
         public MainForm()
         {
@@ -129,6 +141,13 @@ namespace leeyez_kai
                 _skipSelectPath = _treeManager.IsSelectedUnderFavorites();
                 NavigateTo(path);
                 _skipSelectPath = false;
+            };
+            _treeManager.FavoritesChanged += (favorites) =>
+            {
+                var state = _cachedState ?? PersistenceService.LoadState() ?? new AppState();
+                _cachedState = state;
+                state.Favorites = favorites;
+                SaveCurrentState();
             };
 
             _fileListManager = new FileListManager(_fileList);
@@ -164,8 +183,10 @@ namespace leeyez_kai
             _virtualGrid.ItemDoubleClicked += OnFileDoubleClicked;
 
             _bookshelfService.Load();
+            _historyService.Load();
             SetupHoverPreview();
             SetupBookshelf();
+            SetupHistory();
         }
 
         private void SetupSevenZipPath()
@@ -212,8 +233,13 @@ namespace leeyez_kai
             _mediaPlayer.Stop();
             CleanupTempMedia();
             SaveCurrentState();
+            _historyService.Save();
+            _historyService.Dispose();
             _imageCache.Dispose();
             _folderWatcher?.Dispose();
+            _archiveDebounce?.Dispose();
+            _debounceTimer?.Dispose();
+            _prefetchCts?.Dispose();
         }
 
         // ── 設定・ヘルプ ──
@@ -226,6 +252,7 @@ namespace leeyez_kai
                 _folderTree.Font = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
                 _fileList.Font = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
                 _bookshelfTree.Font = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
+                _historyList.Font = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
                 _fileListManager!.RecursiveMode = _appSettings.RecursiveMedia;
                 _imageCache.SetMaxEntries(Math.Max(16, _appSettings.MemoryLimitMB / 4));
                 // 再読み込み
