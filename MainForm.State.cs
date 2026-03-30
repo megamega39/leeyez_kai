@@ -56,7 +56,7 @@ namespace leeyez_kai
                 existing.SidebarWidth = _mainSplit.SplitterDistance;
                 PersistenceService.SaveState(existing);
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to save window state: {ex.Message}"); }
         }
 
         private void RestoreWindowState()

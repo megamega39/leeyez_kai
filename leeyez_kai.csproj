@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <ApplicationIcon />
+    <ApplicationIcon>icon.ico</ApplicationIcon>
     <RootNamespace>leeyez_kai</RootNamespace>
     <AssemblyName>leeyez_kai</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -19,6 +19,10 @@
     <!-- WinFormsはTrimming非対応のため、Single file publishで代替 -->
     <PublishSingleFile>true</PublishSingleFile>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="icon.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="Tests\**" />

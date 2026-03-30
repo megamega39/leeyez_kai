@@ -26,7 +26,7 @@ namespace leeyez_kai.Services
                 File.WriteAllText(SettingsFile, json);
                 Logger.Log($"State saved: LastPath={state.LastPath}, LastViewingFile={state.LastViewingFile}, LastFileIndex={state.LastFileIndex}");
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to save state: {ex.Message}"); }
         }
 
         public static AppState? LoadState()
@@ -39,7 +39,7 @@ namespace leeyez_kai.Services
                     return JsonSerializer.Deserialize<AppState>(json);
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to load state: {ex.Message}"); }
             return null;
         }
     }

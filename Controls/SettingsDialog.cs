@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
+using leeyez_kai.i18n;
 using leeyez_kai.Models;
 using leeyez_kai.Services;
 
@@ -19,6 +20,7 @@ namespace leeyez_kai.Controls
         private NumericUpDown _numThumbSize = null!;
         private NumericUpDown _numPreviewSize = null!;
         private NumericUpDown _numFontSize = null!;
+        private ComboBox _cmbLanguage = null!;
         private ListView _shortcutList = null!;
 
         public SettingsDialog(AppSettings settings, ShortcutManager shortcuts)
@@ -30,8 +32,8 @@ namespace leeyez_kai.Controls
 
         private void InitializeComponent()
         {
-            Text = "設定";
-            Size = new Size(500, 480);
+            Text = Localization.Get("settings.title");
+            Size = new Size(500, 660);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false;
@@ -41,48 +43,73 @@ namespace leeyez_kai.Controls
             var tabs = new TabControl { Dock = DockStyle.Fill };
 
             // ── 一般タブ ──
-            var generalTab = new TabPage("一般");
+            var generalTab = new TabPage(Localization.Get("settings.general"));
             var panel = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill, ColumnCount = 2, Padding = new Padding(16), AutoScroll = true
+                Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 20, Padding = new Padding(16), AutoScroll = true
             };
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
             panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
+            for (int i = 0; i < 20; i++)
+                panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             int row = 0;
-            AddSectionLabel(panel, "ナビゲーション", ref row);
-            _chkWrapNav = AddCheckBox(panel, "端でループする（最後から最初に戻る）", _settings.WrapNavigation, ref row);
-            _chkAutoSpreadCover = AddCheckBox(panel, "見開き時に最初のページを単独表示する", _settings.AutoSpreadCover, ref row);
-            AddSectionLabel(panel, "ファイル読み込み", ref row);
-            _chkRecursiveMedia = AddCheckBox(panel, "サブフォルダも含めて画像を表示（再帰表示）", _settings.RecursiveMedia, ref row);
-            AddSectionLabel(panel, "メディア", ref row);
-            _chkAutoPlay = AddCheckBox(panel, "動画・音声を自動再生", _settings.AutoPlay, ref row);
-            AddSectionLabel(panel, "パフォーマンス", ref row);
-            _numMemoryLimit = AddNumeric(panel, "キャッシュメモリ上限 (MB)", 128, 2048, 128, _settings.MemoryLimitMB, 0, ref row);
-            AddSectionLabel(panel, "表示", ref row);
-            _numThreshold = AddNumeric(panel, "見開き判定の閾値", 0.5m, 2.0m, 0.05m, (decimal)_settings.SpreadThreshold, 2, ref row);
-            _numThumbSize = AddNumeric(panel, "サムネイルサイズ (px)", 80, 500, 16, _settings.ThumbnailSize, 0, ref row);
-            _numPreviewSize = AddNumeric(panel, "プレビューサイズ (px)", 160, 500, 16, _settings.HoverPreviewSize, 0, ref row);
-            _numFontSize = AddNumeric(panel, "フォントサイズ", 8, 18, 1, _settings.SidebarFontSize, 0, ref row);
+            // Language（他のNumeric項目と同じレイアウト）
+            panel.Controls.Add(new Label { Text = "Language", AutoSize = true, Anchor = AnchorStyles.Left }, 0, row); // 全言語共通で英語表記
+            _cmbLanguage = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+            foreach (var (code, name) in Localization.AvailableLanguages)
+                _cmbLanguage.Items.Add(name);
+            var langIdx = Array.FindIndex(Localization.AvailableLanguages, l => l.code == _settings.Language);
+            _cmbLanguage.SelectedIndex = langIdx >= 0 ? langIdx : 0;
+            _cmbLanguage.SelectedIndexChanged += (s, e) =>
+            {
+                if (_cmbLanguage.SelectedIndex >= 0)
+                {
+                    var code = Localization.AvailableLanguages[_cmbLanguage.SelectedIndex].code;
+                    _settings.Language = code;
+                    Localization.SetLanguage(code);
+                    SuspendLayout();
+                    Controls.Clear();
+                    InitializeComponent();
+                    ResumeLayout(true);
+                }
+            };
+            panel.Controls.Add(_cmbLanguage, 1, row);
+            row++;
+
+            AddSectionLabel(panel, Localization.Get("settings.nav"), ref row);
+            _chkWrapNav = AddCheckBox(panel, Localization.Get("settings.wrap"), _settings.WrapNavigation, ref row);
+            _chkAutoSpreadCover = AddCheckBox(panel, Localization.Get("settings.spreadcover"), _settings.AutoSpreadCover, ref row);
+            AddSectionLabel(panel, Localization.Get("settings.fileload"), ref row);
+            _chkRecursiveMedia = AddCheckBox(panel, Localization.Get("settings.recursive"), _settings.RecursiveMedia, ref row);
+            AddSectionLabel(panel, Localization.Get("settings.media"), ref row);
+            _chkAutoPlay = AddCheckBox(panel, Localization.Get("settings.autoplay"), _settings.AutoPlay, ref row);
+            AddSectionLabel(panel, Localization.Get("settings.perf"), ref row);
+            _numMemoryLimit = AddNumeric(panel, Localization.Get("settings.memlimit"), 128, 2048, 128, _settings.MemoryLimitMB, 0, ref row);
+            AddSectionLabel(panel, Localization.Get("settings.display"), ref row);
+            _numThreshold = AddNumeric(panel, Localization.Get("settings.threshold"), 0.5m, 2.0m, 0.05m, (decimal)_settings.SpreadThreshold, 2, ref row);
+            _numThumbSize = AddNumeric(panel, Localization.Get("settings.thumbsize"), 80, 500, 16, _settings.ThumbnailSize, 0, ref row);
+            _numPreviewSize = AddNumeric(panel, Localization.Get("settings.previewsize"), 160, 500, 16, _settings.HoverPreviewSize, 0, ref row);
+            _numFontSize = AddNumeric(panel, Localization.Get("settings.fontsize"), 8, 18, 1, _settings.SidebarFontSize, 0, ref row);
 
             generalTab.Controls.Add(panel);
             tabs.TabPages.Add(generalTab);
 
             // ── ショートカットタブ ──
-            var shortcutTab = new TabPage("ショートカット");
+            var shortcutTab = new TabPage(Localization.Get("settings.shortcuts"));
 
             _shortcutList = new ListView
             {
                 Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, GridLines = true,
                 HeaderStyle = ColumnHeaderStyle.Nonclickable
             };
-            _shortcutList.Columns.Add("操作", 200);
-            _shortcutList.Columns.Add("ショートカット", 200);
+            _shortcutList.Columns.Add(Localization.Get("settings.action"), 200);
+            _shortcutList.Columns.Add(Localization.Get("settings.shortcut"), 200);
 
-            foreach (var (id, label, _) in ShortcutManager.AllActions)
+            foreach (var (id, labelKey, _) in ShortcutManager.AllActions)
             {
                 var key = _shortcuts.GetKey(id);
-                var lvi = new ListViewItem(new[] { label, ShortcutManager.KeyToString(key) });
+                var lvi = new ListViewItem(new[] { Localization.Get(labelKey), ShortcutManager.KeyToString(key) });
                 lvi.Tag = id;
                 _shortcutList.Items.Add(lvi);
             }
@@ -90,7 +117,7 @@ namespace leeyez_kai.Controls
             _shortcutList.DoubleClick += ShortcutList_DoubleClick;
 
             var shortcutBtnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 36, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(4) };
-            var btnReset = new Button { Text = "初期設定に戻す", Width = 120 };
+            var btnReset = new Button { Text = Localization.Get("settings.reset"), Width = 120 };
             btnReset.Click += (s, e) =>
             {
                 _shortcuts.ResetToDefault();
@@ -100,7 +127,7 @@ namespace leeyez_kai.Controls
 
             var shortcutHint = new Label
             {
-                Text = "※ ダブルクリックでショートカットキーを変更できます",
+                Text = Localization.Get("settings.shorthint"),
                 Dock = DockStyle.Top, Height = 24, Padding = new Padding(8, 4, 0, 0),
                 ForeColor = Color.Gray, Font = new Font("Yu Gothic UI", 8.5f)
             };
@@ -111,8 +138,8 @@ namespace leeyez_kai.Controls
 
             // ── ボタン ──
             var btnPanel = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 44, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
-            var btnCancel = new Button { Text = "キャンセル", Width = 90, DialogResult = DialogResult.Cancel };
-            var btnOk = new Button { Text = "OK", Width = 90, DialogResult = DialogResult.OK };
+            var btnCancel = new Button { Text = Localization.Get("settings.cancel"), Width = 90, DialogResult = DialogResult.Cancel };
+            var btnOk = new Button { Text = Localization.Get("settings.ok"), Width = 90, DialogResult = DialogResult.OK };
             btnOk.Click += (s, e) => ApplySettings();
             btnPanel.Controls.Add(btnCancel);
             btnPanel.Controls.Add(btnOk);
@@ -160,6 +187,11 @@ namespace leeyez_kai.Controls
             _settings.ThumbnailSize = (int)_numThumbSize.Value;
             _settings.HoverPreviewSize = (int)_numPreviewSize.Value;
             _settings.SidebarFontSize = (int)_numFontSize.Value;
+            if (_cmbLanguage.SelectedIndex >= 0)
+            {
+                _settings.Language = Localization.AvailableLanguages[_cmbLanguage.SelectedIndex].code;
+                Localization.SetLanguage(_settings.Language);
+            }
             _settings.Save();
             _shortcuts.Save();
         }
@@ -199,7 +231,7 @@ namespace leeyez_kai.Controls
 
         public KeyCaptureDialog(string actionName)
         {
-            Text = "ショートカット変更";
+            Text = Localization.Get("dlg.shortcutchange");
             Size = new Size(350, 150);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
@@ -210,13 +242,13 @@ namespace leeyez_kai.Controls
 
             var lbl = new Label
             {
-                Text = $"「{actionName}」のキーを押してください...",
+                Text = string.Format(Localization.Get("dlg.capturekey"), actionName),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter
             };
             Controls.Add(lbl);
 
-            var btnClear = new Button { Text = "クリア", Width = 80, Dock = DockStyle.Bottom, DialogResult = DialogResult.OK };
+            var btnClear = new Button { Text = Localization.Get("dlg.clear"), Width = 80, Dock = DockStyle.Bottom, DialogResult = DialogResult.OK };
             btnClear.Click += (s, e) => { CapturedKey = Keys.None; };
             Controls.Add(btnClear);
 
@@ -231,6 +263,19 @@ namespace leeyez_kai.Controls
                 DialogResult = DialogResult.OK;
                 Close();
             };
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            var keyCode = keyData & Keys.KeyCode;
+            if (keyCode == Keys.Up || keyCode == Keys.Down || keyCode == Keys.Left || keyCode == Keys.Right
+                || keyCode == Keys.Tab)
+            {
+                // 矢印キー・Tabを通常キー入力としてKeyDownに渡す
+                OnKeyDown(new KeyEventArgs(keyData));
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
     }
 }

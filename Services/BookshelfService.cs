@@ -43,7 +43,7 @@ namespace leeyez_kai.Services
                 var json = JsonSerializer.Serialize(_data, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(FilePath, json);
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to save bookshelf data: {ex.Message}"); }
         }
 
         public BookshelfCategory AddCategory(string name)

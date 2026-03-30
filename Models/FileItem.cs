@@ -17,6 +17,13 @@ namespace leeyez_kai.Models
         public Icon? Icon { get; set; }
         public Image? Thumbnail { get; set; }
 
+        private string? _ext;
+        public string Ext => _ext ??= FileExtensions.GetExt(Name);
+        public bool IsImage => FileExtensions.IsImage(Ext);
+        public bool IsMedia => FileExtensions.IsMedia(Ext);
+        public bool IsViewable => FileExtensions.IsViewable(Ext);
+        public bool IsArchiveExt => FileExtensions.IsArchive(Ext);
+
         public string SizeString =>
             IsDirectory ? "" :
             Size < 1024 ? $"{Size} B" :
@@ -26,17 +33,17 @@ namespace leeyez_kai.Models
 
         public static FileItem FromFileInfo(FileInfo fi)
         {
-            var ext = fi.Extension.ToLowerInvariant();
-            return new FileItem
+            var item = new FileItem
             {
                 Name = fi.Name,
                 FullPath = fi.FullName,
                 Size = fi.Length,
                 LastModified = fi.LastWriteTime,
                 IsDirectory = false,
-                IsArchiveFile = FileExtensions.Archive.Contains(ext),
-                DisplayType = string.IsNullOrEmpty(ext) ? "ファイル" : ext.TrimStart('.').ToUpperInvariant()
             };
+            item.IsArchiveFile = item.IsArchiveExt;
+            item.DisplayType = string.IsNullOrEmpty(item.Ext) ? "ファイル" : item.Ext.TrimStart('.').ToUpperInvariant();
+            return item;
         }
 
         public static FileItem FromDirectoryInfo(DirectoryInfo di)

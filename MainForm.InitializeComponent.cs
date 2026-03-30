@@ -1,7 +1,9 @@
 using System.Drawing;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using leeyez_kai.Controls;
+using leeyez_kai.i18n;
 
 namespace leeyez_kai
 {
@@ -12,6 +14,8 @@ namespace leeyez_kai
             SuspendLayout();
 
             Text = "Leeyez Kai";
+            var icoPath = Path.Combine(AppContext.BaseDirectory, "icon.ico");
+            if (File.Exists(icoPath)) try { Icon = new Icon(icoPath); } catch { }
             Size = new Size(1200, 800);
             MinimumSize = new Size(600, 400);
             StartPosition = FormStartPosition.CenterScreen;
@@ -36,27 +40,27 @@ namespace leeyez_kai
 
             _btnBack = new ToolStripSplitButton("\uE72B")
             {
-                ToolTipText = "戻る (Alt+←)", AutoSize = false, Size = new Size(56, 44),
+                ToolTipText = Localization.Get("nav.back"), AutoSize = false, Size = new Size(56, 44),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
                 Font = new Font(iconFont, 18f), ForeColor = Color.FromArgb(60, 60, 60),
                 Padding = new Padding(2), Margin = new Padding(1, 0, 1, 0)
             };
             _btnForward = new ToolStripSplitButton("\uE72A")
             {
-                ToolTipText = "進む (Alt+→)", AutoSize = false, Size = new Size(56, 44),
+                ToolTipText = Localization.Get("nav.forward"), AutoSize = false, Size = new Size(56, 44),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
                 Font = new Font(iconFont, 18f), ForeColor = Color.FromArgb(60, 60, 60),
                 Padding = new Padding(2), Margin = new Padding(1, 0, 1, 0)
             };
-            _btnUp = CreateNavButton("\uE74A", "上へ (Alt+↑)", iconFont, 18f);
-            _btnRefresh = CreateNavButton("\uE72C", "更新 (F5)", iconFont, 18f);
-            _btnHoverPreview = CreateNavButton("\uE7B3", "ホバープレビュー", iconFont, 18f);
-            _btnBookshelf = CreateNavButton("\uE82D", "本棚", iconFont, 18f);
-            _btnHistory = CreateNavButton("\uE81C", "履歴", iconFont, 18f);
-            _btnListView = CreateNavButton("\uE8FD", "リスト表示", iconFont, 18f);
-            _btnGridView = CreateNavButton("\uE80A", "グリッド表示", iconFont, 18f);
-            _btnSettings = CreateNavButton("\uE713", "設定", iconFont, 18f);
-            _btnHelp = CreateNavButton("\uE897", "ヘルプ (F1)", iconFont, 18f);
+            _btnUp = CreateNavButton("\uE74A", Localization.Get("nav.up"), iconFont, 18f);
+            _btnRefresh = CreateNavButton("\uE72C", Localization.Get("nav.refresh"), iconFont, 18f);
+            _btnHoverPreview = CreateNavButton("\uE7B3", Localization.Get("nav.hover"), iconFont, 18f);
+            _btnBookshelf = CreateNavButton("\uE82D", Localization.Get("nav.bookshelf"), iconFont, 18f);
+            _btnHistory = CreateNavButton("\uE81C", Localization.Get("history.label"), iconFont, 18f);
+            _btnListView = CreateNavButton("\uE8FD", Localization.Get("nav.list"), iconFont, 18f);
+            _btnGridView = CreateNavButton("\uE80A", Localization.Get("nav.grid"), iconFont, 18f);
+            _btnSettings = CreateNavButton("\uE713", Localization.Get("nav.settings"), iconFont, 18f);
+            _btnHelp = CreateNavButton("\uE897", Localization.Get("nav.help"), iconFont, 18f);
 
             _navBar.Items.AddRange(new ToolStripItem[] {
                 _btnBack, _btnForward, _btnUp, _btnRefresh,
@@ -87,7 +91,7 @@ namespace leeyez_kai
             };
             _addressLabel = new Label
             {
-                Text = "アドレス(A)", AutoSize = true, Location = new Point(6, 6),
+                Text = Localization.Get("sidebar.address"), AutoSize = true, Location = new Point(6, 6),
                 ForeColor = Color.FromArgb(100, 100, 100), Font = new Font("Yu Gothic UI", 9f)
             };
             _addressBox = new TextBox
@@ -123,11 +127,20 @@ namespace leeyez_kai
                 BackColor = Color.FromArgb(0xF0, 0xF0, 0xF0), Padding = new Padding(2)
             };
             var histIcon = new Label { Text = "\uE81C", AutoSize = true, Location = new Point(4, 3), Font = new Font(iconFont, 10f) };
-            var histLabel = new Label { Text = "履歴", AutoSize = true, Location = new Point(30, 5), Font = new Font("Yu Gothic UI", 9f) };
-            var histBtnClear = new Button { Text = "全削除", FlatStyle = FlatStyle.Flat, Size = new Size(52, 22), Location = new Point(72, 3), Font = new Font("Yu Gothic UI", 8f) };
-            histBtnClear.FlatAppearance.BorderSize = 1;
-            histBtnClear.Click += (s, e) => ClearAllHistory();
-            _historyToolbar.Controls.AddRange(new Control[] { histIcon, histLabel, histBtnClear });
+            _historyLabel = new Label { Text = Localization.Get("history.label"), AutoSize = true, Location = new Point(30, 5), Font = new Font("Yu Gothic UI", 9f) };
+            _historyBtnClear = new Button { Text = Localization.Get("history.clear"), FlatStyle = FlatStyle.Flat, Size = new Size(52, 22), Location = new Point(72, 3), Font = new Font("Yu Gothic UI", 8f) };
+            _historyBtnClear.FlatAppearance.BorderSize = 1;
+            _historyBtnClear.Click += (s, e) => ClearAllHistory();
+            _historyFilterBox = new TextBox
+            {
+                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+                Location = new Point(130, 3), Height = 22, Width = 120,
+                Font = new Font("Yu Gothic UI", 8.5f), BorderStyle = BorderStyle.FixedSingle
+            };
+            _historyFilterBox.TextChanged += (s, e) => { _historyFilter = _historyFilterBox.Text; BuildHistoryList(); };
+            _historyFilterBox.HandleCreated += (s, e) => SetPlaceholder(_historyFilterBox, Localization.Get("sidebar.filter"));
+            _historyToolbar.Resize += (s, e) => { _historyFilterBox.Width = _historyToolbar.Width - 155; };
+            _historyToolbar.Controls.AddRange(new Control[] { histIcon, _historyLabel, _historyBtnClear, _historyFilterBox });
 
             _historyList = new ListView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Yu Gothic UI", 9f), Visible = false };
 
@@ -145,9 +158,10 @@ namespace leeyez_kai
             bsBtnNew.FlatAppearance.BorderSize = 1;
             bsBtnNew.Click += (s, e) => BookshelfNewCategory();
             _bookshelfToolbar.Controls.AddRange(new Control[] { bsIcon, bsLabel, bsBtnNew });
-            _filterPanel = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(4) };
+            _filterPanel = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(4, 4, 20, 4) };
             _filterBox = new TextBox { Dock = DockStyle.Fill, Font = new Font("Yu Gothic UI", 9f), BorderStyle = BorderStyle.FixedSingle };
             _filterBox.TextChanged += (s, e) => _fileListManager?.SetFilter(_filterBox.Text);
+            _filterBox.HandleCreated += (s, e) => SetPlaceholder(_filterBox, Localization.Get("sidebar.filter"));
             _filterPanel.Controls.Add(_filterBox);
             _fileList = new ListView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None };
             _virtualGrid = new VirtualGridPanel { Dock = DockStyle.Fill, Visible = false };
@@ -155,7 +169,7 @@ namespace leeyez_kai
             var folderLabel = new Panel { Dock = DockStyle.Top, Height = 24, BackColor = Color.FromArgb(0xF0, 0xF0, 0xF0) };
             _sidebarLabel = new Label
             {
-                Text = "フォルダ", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+                Text = Localization.Get("sidebar.folder"), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(4, 0, 0, 0), Font = new Font("Yu Gothic UI", 9f)
             };
             folderLabel.Controls.Add(_sidebarLabel);
@@ -386,6 +400,15 @@ namespace leeyez_kai
             // 初期ハイライト
             UpdateScaleModeHighlight(ImageViewer.ScaleMode.FitWindow);
             UpdateViewModeHighlight();
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam);
+        private const uint EM_SETCUEBANNER = 0x1501;
+
+        private static void SetPlaceholder(TextBox textBox, string text)
+        {
+            SendMessage(textBox.Handle, EM_SETCUEBANNER, (IntPtr)1, text);
         }
     }
 }

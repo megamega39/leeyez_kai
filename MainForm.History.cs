@@ -4,6 +4,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using leeyez_kai.i18n;
 using leeyez_kai.Models;
 using leeyez_kai.Services;
 
@@ -14,8 +15,12 @@ namespace leeyez_kai
         private readonly HistoryService _historyService = new();
         private ListView _historyList = null!;
         private Panel _historyToolbar = null!;
+        private Label _historyLabel = null!;
+        private Button _historyBtnClear = null!;
         private bool _isHistoryMode;
         private bool _historyListUpdating;
+        private string _historyFilter = string.Empty;
+        private TextBox _historyFilterBox = null!;
 
         private void SetupHistory()
         {
@@ -49,7 +54,7 @@ namespace leeyez_kai
             ctx.Items.Add("お気に入りに追加", null, (s, e) => AddHistoryToFavorites());
             ctx.Items.Add("本棚に追加", null, (s, e) => AddHistoryToBookshelf());
             ctx.Items.Add(new ToolStripSeparator());
-            ctx.Items.Add("この履歴を削除", null, (s, e) => DeleteHistoryEntry());
+            ctx.Items.Add(Localization.Get("history.deleteentry"), null, (s, e) => DeleteHistoryEntry());
 
             _historyList.MouseUp += (s, e) =>
             {
@@ -99,7 +104,7 @@ namespace leeyez_kai
                 panel.Controls.SetChildIndex(_folderTree, 0);
 
                 _sidebarLabel.Parent.Visible = true;
-                _sidebarLabel.Text = "フォルダ";
+                _sidebarLabel.Text = Localization.Get("sidebar.folder");
                 _btnHistory.BackColor = Color.Transparent;
             }
 
@@ -121,6 +126,8 @@ namespace leeyez_kai
             _historyList.Groups.AddRange(new[] { groupToday, groupYesterday, groupThisWeek, groupLastWeek, groupOlder });
 
             var entries = _historyService.Entries;
+            if (!string.IsNullOrWhiteSpace(_historyFilter))
+                entries = entries.Where(e => e.Name.Contains(_historyFilter, StringComparison.OrdinalIgnoreCase)).ToList();
 
             foreach (var entry in entries)
             {
@@ -302,7 +309,7 @@ namespace leeyez_kai
 
         private void ClearAllHistory()
         {
-            if (MessageBox.Show("履歴をすべて削除しますか？", "確認",
+            if (MessageBox.Show(Localization.Get("history.clearconfirm"), Localization.Get("dlg.confirm"),
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
             {
                 _historyService.ClearAll();

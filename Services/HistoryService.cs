@@ -122,15 +122,21 @@ namespace leeyez_kai.Services
         /// <summary>デバウンス付き非同期保存をスケジュール</summary>
         private void ScheduleSave()
         {
-            _saveTimer?.Dispose();
-            _saveTimer = new System.Threading.Timer(_ => SaveInternal(), null, 500, Timeout.Infinite);
+            lock (_lock)
+            {
+                _saveTimer?.Dispose();
+                _saveTimer = new System.Threading.Timer(_ => SaveInternal(), null, 500, Timeout.Infinite);
+            }
         }
 
         /// <summary>即座に保存（アプリ終了時用）</summary>
         public void Save()
         {
-            _saveTimer?.Dispose();
-            _saveTimer = null;
+            lock (_lock)
+            {
+                _saveTimer?.Dispose();
+                _saveTimer = null;
+            }
             SaveInternal();
         }
 

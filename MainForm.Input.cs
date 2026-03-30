@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using SkiaSharp;
 using leeyez_kai.Controls;
 using leeyez_kai.Models;
 using leeyez_kai.Services;
@@ -68,6 +69,10 @@ namespace leeyez_kai
             if (action == null && keyData == (Keys.Control | Keys.Add)) action = "ZoomIn";
             if (action == null && keyData == (Keys.Control | Keys.Subtract)) action = "ZoomOut";
 
+            // ↑↓の代替キー（書庫/フォルダ切替）
+            if (action == null && keyData == Keys.Up) action = "PrevFolder";
+            if (action == null && keyData == Keys.Down) action = "NextFolder";
+
             if (action != null)
             {
                 // テキスト入力中に単独キー（修飾なし）は無効
@@ -101,8 +106,111 @@ namespace leeyez_kai
                 case "SingleView": SetViewMode(1); return true;
                 case "SpreadView": SetViewMode(2); return true;
                 case "AutoView": SetViewMode(0); return true;
+                case "PrevFolder": GoSiblingFolder(-1); return true;
+                case "NextFolder": GoSiblingFolder(1); return true;
+                case "CopyImage": CopyImageToClipboard(); return true;
+                case "RotateCW": RotateImage(true); return true;
+                case "RotateCCW": RotateImage(false); return true;
+                case "ToggleBookshelf": ToggleBookshelf(); return true;
+                case "ViewModeToggle": SetViewMode(_viewMode == 1 ? 2 : 1); return true;
+                case "SetBindingLTR": _isRTL = false; _btnBinding.Text = "→"; ShowCurrentFile(); return true;
+                case "SetBindingRTL": _isRTL = true; _btnBinding.Text = "←"; ShowCurrentFile(); return true;
                 default: return false;
             }
+        }
+
+        // ── 兄弟フォルダ/書庫移動 ──
+        [System.Runtime.InteropServices.DllImport("shlwapi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern int StrCmpLogicalW(string x, string y);
+
+        private void GoSiblingFolder(int direction)
+        {
+            if (_isHistoryMode)
+            {
+                // 履歴モード: ListViewの表示順で移動
+                var idx = _historyList.SelectedIndices.Count > 0 ? _historyList.SelectedIndices[0] : -1;
+                var newIdx = idx + direction;
+                if (newIdx < 0 || newIdx >= _historyList.Items.Count) return;
+                _skipSelectPath = true;
+                _historyList.Items[newIdx].Selected = true;
+                _historyList.Items[newIdx].Focused = true;
+                _historyList.EnsureVisible(newIdx);
+                _skipSelectPath = false;
+                return;
+            }
+
+            if (_isBookshelfMode)
+            {
+                // 本棚モード: ツリービューの表示順で移動
+                var currentNode = _bookshelfTree.SelectedNode;
+                if (currentNode == null) return;
+                var targetNode = direction > 0 ? currentNode.NextVisibleNode : currentNode.PrevVisibleNode;
+                if (targetNode == null) return;
+                var tag = targetNode.Tag?.ToString();
+                if (tag != null && tag.StartsWith("ITEM:"))
+                {
+                    var path = tag.Substring(5);
+                    _skipSelectPath = true;
+                    NavigateTo(path);
+                    _skipSelectPath = false;
+                }
+                _bookshelfTree.SelectedNode = targetNode;
+                return;
+            }
+
+            // 通常モード: フォルダツリーの表示順で移動
+            {
+                var currentNode = _folderTree.SelectedNode;
+                if (currentNode == null) return;
+                var targetNode = direction > 0 ? currentNode.NextVisibleNode : currentNode.PrevVisibleNode;
+                if (targetNode == null) return;
+                var targetPath = targetNode.Tag?.ToString();
+                if (!string.IsNullOrEmpty(targetPath))
+                {
+                    _skipSelectPath = true;
+                    NavigateTo(targetPath);
+                    _skipSelectPath = false;
+                    // AfterSelectを抑止して直接選択（SelectAndRevealはチラつくため不使用）
+                    _treeManager!.SuppressSelect = true;
+                    _folderTree.SelectedNode = targetNode;
+                    _treeManager!.SuppressSelect = false;
+                }
+            }
+        }
+
+        // ── 画像をクリップボードにコピー ──
+        private void CopyImageToClipboard()
+        {
+            if (_currentFileIndex < 0 || _currentFileIndex >= _viewableFiles.Count) return;
+            var file = _viewableFiles[_currentFileIndex];
+            var skBmp = _imageCache.Get(file.FullPath);
+            if (skBmp != null)
+            {
+                // Temporary GDI+ Bitmap for clipboard (WinForms API requirement)
+                using var gdiBmp = SKBitmapHelper.ToGdiBitmap(skBmp);
+                Clipboard.SetImage(gdiBmp);
+                _statusLeft.Text = "クリップボードにコピーしました";
+            }
+        }
+
+        // ── 画像回転 ──
+        private void RotateImage(bool clockwise)
+        {
+            if (_currentFileIndex < 0 || _currentFileIndex >= _viewableFiles.Count) return;
+            var file = _viewableFiles[_currentFileIndex];
+            var skBmp = _imageCache.Get(file.FullPath);
+            if (skBmp == null) return;
+
+            var rotated = new SKBitmap(skBmp.Height, skBmp.Width, skBmp.ColorType, skBmp.AlphaType);
+            using (var canvas = new SKCanvas(rotated))
+            {
+                canvas.Translate(clockwise ? rotated.Width : 0, clockwise ? 0 : rotated.Height);
+                canvas.RotateDegrees(clockwise ? 90 : -90);
+                canvas.DrawBitmap(skBmp, 0, 0);
+            }
+
+            // 回転画像を直接表示（キャッシュには入れない — 一時的な視覚操作）
+            _imageViewer.ShowBitmap(rotated, rotated.Width, rotated.Height);
         }
 
         private int _savedStyle;
@@ -275,7 +383,7 @@ namespace leeyez_kai
         {
             _mediaPlayer.Stop();
             _prefetchCts?.Cancel();
-            _archiveStreamCache.Clear();
+            ClearStreamCache();
             _imageCache.Clear();
             ArchiveService.CloseCache();
         }

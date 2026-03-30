@@ -21,6 +21,7 @@ namespace leeyez_kai
                 UpdateNavButtons();
                 AutoSaveState();
                 RecordHistory(path);
+                if (!_skipSelectPath) _treeManager?.SelectPath(path);
 
                 var archiveSplit = SplitArchivePath(path);
                 if (archiveSplit != null)
@@ -47,7 +48,6 @@ namespace leeyez_kai
                     NavigateToFolder(path);
                 }
 
-                if (!_skipSelectPath) _treeManager?.SelectPath(path);
             }
             finally { _isNavigating = false; }
         }
@@ -56,7 +56,6 @@ namespace leeyez_kai
         private void NavigateToArchiveSplit(string path, (string archive, string entry) split)
         {
             LoadArchive(split.archive, split.entry.TrimStart('/'));
-            if (!_skipSelectPath) _treeManager?.SelectPath(path);
         }
 
         /// <summary>書庫ファイルへのナビゲーション（デバウンス付き）</summary>
@@ -103,7 +102,6 @@ namespace leeyez_kai
                 ShowCurrentFile();
                 SyncFileListSelection(idx);
             }
-            if (!_skipSelectPath) _treeManager?.SelectPath(dir);
         }
 
         /// <summary>フォルダへのナビゲーション</summary>

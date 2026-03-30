@@ -79,7 +79,7 @@ namespace leeyez_kai
                 panel.Controls.SetChildIndex(_folderTree, 0);
 
                 _sidebarLabel.Parent.Visible = true; // ヘッダーラベルを再表示
-                _sidebarLabel.Text = "フォルダ";
+                _sidebarLabel.Text = i18n.Localization.Get("sidebar.folder");
                 _btnBookshelf.BackColor = Color.Transparent;
             }
 

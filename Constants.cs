@@ -29,10 +29,10 @@ namespace leeyez_kai
     public static class AppConstants
     {
         public const int ImageCacheSize = 50;
-        public const int PrefetchCount = 10;
+        public const int PrefetchCount = 8;
         public const int DebounceMs = 16; // ~60fps
         public const int AutoSaveMs = 500;
-        public const int FileStreamBuffer = 81920;
+        public const int FileStreamBuffer = 262144;
         public const int ZoomStepPercent = 25;
         public const float SpreadThreshold = 1.0f; // 縦横比がこの値以下なら縦向き（見開き対象）
         public const int ZoomMin = 25;

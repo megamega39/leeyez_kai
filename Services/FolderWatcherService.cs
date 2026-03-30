@@ -47,17 +47,24 @@ namespace leeyez_kai.Services
         private void OnFsEvent(object sender, FileSystemEventArgs e)
         {
             // WinFormsではInvokeを使ってUIスレッドに戻す
-            if (Application.OpenForms.Count > 0)
+            try
             {
-                var form = Application.OpenForms[0];
-                if (form != null && !form.IsDisposed)
+                if (Application.OpenForms.Count > 0)
                 {
-                    form.BeginInvoke(() =>
+                    var form = Application.OpenForms[0];
+                    if (form != null && !form.IsDisposed)
                     {
-                        _debounceTimer.Stop();
-                        _debounceTimer.Start();
-                    });
+                        form.BeginInvoke(() =>
+                        {
+                            _debounceTimer.Stop();
+                            _debounceTimer.Start();
+                        });
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"FolderWatcher event dispatch failed: {ex.Message}");
             }
         }
 

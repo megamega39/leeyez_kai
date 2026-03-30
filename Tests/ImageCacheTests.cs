@@ -1,12 +1,12 @@
-using System.Drawing;
+using SkiaSharp;
 using leeyez_kai.Services;
 
 namespace leeyez_kai.Tests;
 
 public class ImageCacheTests
 {
-    private static Bitmap CreateTestBitmap(int w = 10, int h = 10)
-        => new Bitmap(w, h);
+    private static SKBitmap CreateTestBitmap(int w = 10, int h = 10)
+        => new SKBitmap(w, h);
 
     [Fact]
     public void Put_And_Get()
@@ -96,20 +96,23 @@ public class ImageCacheTests
     }
 
     [Fact]
-    public void Put_SameKey_UpdatesBitmap()
+    public void Put_SameKey_RetainsPrevious()
     {
         using var cache = new ImageCache(5);
         var bmp1 = CreateTestBitmap(10, 10);
         var bmp2 = CreateTestBitmap(20, 20);
 
         cache.Put("key", bmp1, 10, 10);
-        cache.Put("key", bmp2, 20, 20);
+        var added = cache.Put("key", bmp2, 20, 20);
 
+        Assert.False(added); // same key → not added
         var result = cache.Get("key");
-        Assert.Same(bmp2, result);
+        Assert.Same(bmp1, result); // original retained
 
         var (w, h) = cache.GetOriginalSize("key");
-        Assert.Equal(20, w);
-        Assert.Equal(20, h);
+        Assert.Equal(10, w);
+        Assert.Equal(10, h);
+
+        bmp2.Dispose(); // caller owns rejected bitmap
     }
 }
