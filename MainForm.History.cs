@@ -47,12 +47,12 @@ namespace leeyez_kai
 
             // 右クリックメニュー
             var ctx = new ContextMenuStrip();
-            ctx.Items.Add("関連付けで開く", null, (s, e) => OpenHistoryWithAssociation());
-            ctx.Items.Add("エクスプローラで開く", null, (s, e) => ShowHistoryInExplorer());
-            ctx.Items.Add("パスをコピー", null, (s, e) => CopyHistoryPath());
+            ctx.Items.Add(Localization.Get("ctx.openwith"), null, (s, e) => OpenHistoryWithAssociation());
+            ctx.Items.Add(Localization.Get("ctx.explorer"), null, (s, e) => ShowHistoryInExplorer());
+            ctx.Items.Add(Localization.Get("ctx.copypath"), null, (s, e) => CopyHistoryPath());
             ctx.Items.Add(new ToolStripSeparator());
-            ctx.Items.Add("お気に入りに追加", null, (s, e) => AddHistoryToFavorites());
-            ctx.Items.Add("本棚に追加", null, (s, e) => AddHistoryToBookshelf());
+            ctx.Items.Add(Localization.Get("ctx.addfav"), null, (s, e) => AddHistoryToFavorites());
+            ctx.Items.Add(Localization.Get("ctx.addshelf"), null, (s, e) => AddHistoryToBookshelf());
             ctx.Items.Add(new ToolStripSeparator());
             ctx.Items.Add(Localization.Get("history.deleteentry"), null, (s, e) => DeleteHistoryEntry());
 
@@ -118,11 +118,11 @@ namespace leeyez_kai
             _historyList.Items.Clear();
             _historyList.Groups.Clear();
 
-            var groupToday = new ListViewGroup("today", "今日");
-            var groupYesterday = new ListViewGroup("yesterday", "昨日");
-            var groupThisWeek = new ListViewGroup("thisWeek", "今週");
-            var groupLastWeek = new ListViewGroup("lastWeek", "先週");
-            var groupOlder = new ListViewGroup("older", "それ以前");
+            var groupToday = new ListViewGroup("today", Localization.Get("history.today"));
+            var groupYesterday = new ListViewGroup("yesterday", Localization.Get("history.yesterday"));
+            var groupThisWeek = new ListViewGroup("thisWeek", Localization.Get("history.thisweek"));
+            var groupLastWeek = new ListViewGroup("lastWeek", Localization.Get("history.lastweek"));
+            var groupOlder = new ListViewGroup("older", Localization.Get("history.older"));
             _historyList.Groups.AddRange(new[] { groupToday, groupYesterday, groupThisWeek, groupLastWeek, groupOlder });
 
             var entries = _historyService.Entries;
@@ -134,10 +134,10 @@ namespace leeyez_kai
                 var groupKey = GetDateGroup(entry.LastAccessedTicks);
                 var group = groupKey switch
                 {
-                    "今日" => groupToday,
-                    "昨日" => groupYesterday,
-                    "今週" => groupThisWeek,
-                    "先週" => groupLastWeek,
+                    "today" => groupToday,
+                    "yesterday" => groupYesterday,
+                    "thisweek" => groupThisWeek,
+                    "lastweek" => groupLastWeek,
                     _ => groupOlder
                 };
 
@@ -160,11 +160,11 @@ namespace leeyez_kai
 
             return diffDays switch
             {
-                0 => "今日",
-                1 => "昨日",
-                < 7 => "今週",
-                < 14 => "先週",
-                _ => "それ以前"
+                0 => "today",
+                1 => "yesterday",
+                < 7 => "thisweek",
+                < 14 => "lastweek",
+                _ => "older"
             };
         }
 

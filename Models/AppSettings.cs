@@ -17,9 +17,7 @@ namespace leeyez_kai.Models
         public int SidebarFontSize { get; set; } = 9;
         public string Language { get; set; } = "ja";
 
-        private static readonly string FilePath = Path.Combine(
-            System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
-            "leeyez", "settings.json");
+        private static readonly string FilePath = AppPaths.GetPath("settings.json");
 
         public static AppSettings Load()
         {

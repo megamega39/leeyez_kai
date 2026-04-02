@@ -1,4 +1,8 @@
+using System.Diagnostics;
 using System.Drawing;
+using System.Net.Http;
+using System.Reflection;
+using System.Text.Json;
 using System.Windows.Forms;
 using leeyez_kai.i18n;
 
@@ -6,6 +10,8 @@ namespace leeyez_kai.Controls
 {
     public class HelpDialog : Form
     {
+        private static readonly HttpClient _httpClient = new();
+        private const string GitHubRepo = "megamega39/leeyez_kai";
         public HelpDialog()
         {
             Text = Localization.Get("help.title");
@@ -78,11 +84,175 @@ namespace leeyez_kai.Controls
                 ("help.file.hover", "help.file.hover.how"),
             }));
 
+            tabs.TabPages.Add(BuildAboutTab());
+
             var btnClose = new Button { Text = Localization.Get("help.close"), Width = 90, Dock = DockStyle.Bottom, DialogResult = DialogResult.OK };
             AcceptButton = btnClose;
 
             Controls.Add(tabs);
             Controls.Add(btnClose);
+        }
+
+        private TabPage BuildAboutTab()
+        {
+            var tab = new TabPage(Localization.Get("help.tab.about"));
+            var panel = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(24, 16, 24, 16) };
+
+            var version = Assembly.GetExecutingAssembly().GetName().Version;
+            var versionStr = version != null ? $"{version.Major}.{version.Minor}.{version.Build}" : "1.0.0";
+
+            var lblName = new Label
+            {
+                Text = "Leeyez Kai",
+                Font = new Font("Yu Gothic UI", 18f, FontStyle.Bold),
+                AutoSize = true, Location = new Point(24, 16)
+            };
+
+            var lblVersion = new Label
+            {
+                Text = $"v{versionStr}",
+                Font = new Font("Yu Gothic UI", 11f),
+                ForeColor = Color.FromArgb(100, 100, 100),
+                AutoSize = true, Location = new Point(24, 52)
+            };
+
+            var lblDesc = new Label
+            {
+                Text = Localization.Get("about.description"),
+                Font = new Font("Yu Gothic UI", 9.5f),
+                AutoSize = true, Location = new Point(24, 82)
+            };
+
+            var lblAuthor = new Label
+            {
+                Text = Localization.Get("about.author") + ": shimao",
+                Font = new Font("Yu Gothic UI", 9.5f),
+                AutoSize = true, Location = new Point(24, 116)
+            };
+
+            var lblLicense = new Label
+            {
+                Text = Localization.Get("about.license") + ": MIT",
+                Font = new Font("Yu Gothic UI", 9.5f),
+                AutoSize = true, Location = new Point(24, 140)
+            };
+
+            var lblRuntime = new Label
+            {
+                Text = $".NET {Environment.Version.Major}.{Environment.Version.Minor}",
+                Font = new Font("Yu Gothic UI", 9.5f),
+                ForeColor = Color.FromArgb(100, 100, 100),
+                AutoSize = true, Location = new Point(24, 164)
+            };
+
+            var lnkGitHub = new LinkLabel
+            {
+                Text = "GitHub: megamega39/leeyez_kai",
+                Font = new Font("Yu Gothic UI", 9.5f),
+                AutoSize = true, Location = new Point(24, 196)
+            };
+            lnkGitHub.LinkClicked += (s, e) =>
+            {
+                try { Process.Start(new ProcessStartInfo($"https://github.com/{GitHubRepo}") { UseShellExecute = true }); } catch { }
+            };
+
+            // 更新チェック
+            var btnCheck = new Button
+            {
+                Text = Localization.Get("about.checkupdate"),
+                AutoSize = true, Location = new Point(24, 228)
+            };
+            var lblUpdateResult = new Label
+            {
+                Font = new Font("Yu Gothic UI", 9f),
+                AutoSize = true, Location = new Point(btnCheck.Right + 8, 232),
+                Visible = false
+            };
+            var lnkUpdate = new LinkLabel
+            {
+                Font = new Font("Yu Gothic UI", 9f),
+                AutoSize = true, Location = new Point(btnCheck.Right + 8, 232),
+                Visible = false
+            };
+            lnkUpdate.LinkClicked += (s, e) =>
+            {
+                var url = lnkUpdate.Tag as string;
+                if (url != null)
+                    try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch { }
+            };
+            btnCheck.Click += async (s, e) =>
+            {
+                btnCheck.Enabled = false;
+                lblUpdateResult.Visible = false;
+                lnkUpdate.Visible = false;
+                btnCheck.Text = Localization.Get("about.checking");
+                try
+                {
+                    var (latestTag, releaseUrl) = await CheckLatestRelease();
+                    var latestVersion = ParseVersion(latestTag);
+                    if (latestVersion != null && version != null && latestVersion > version)
+                    {
+                        lnkUpdate.Text = string.Format(Localization.Get("about.newversion"), latestTag);
+                        lnkUpdate.Tag = releaseUrl;
+                        lnkUpdate.Location = new Point(btnCheck.Right + 8, 232);
+                        lnkUpdate.Visible = true;
+                    }
+                    else
+                    {
+                        lblUpdateResult.Text = Localization.Get("about.uptodate");
+                        lblUpdateResult.ForeColor = Color.FromArgb(0, 128, 0);
+                        lblUpdateResult.Location = new Point(btnCheck.Right + 8, 232);
+                        lblUpdateResult.Visible = true;
+                    }
+                }
+                catch
+                {
+                    lblUpdateResult.Text = Localization.Get("about.checkfailed");
+                    lblUpdateResult.ForeColor = Color.FromArgb(200, 0, 0);
+                    lblUpdateResult.Location = new Point(btnCheck.Right + 8, 232);
+                    lblUpdateResult.Visible = true;
+                }
+                btnCheck.Text = Localization.Get("about.checkupdate");
+                btnCheck.Enabled = true;
+            };
+
+            var lblLibHeader = new Label
+            {
+                Text = Localization.Get("about.libraries"),
+                Font = new Font("Yu Gothic UI", 9.5f, FontStyle.Bold),
+                AutoSize = true, Location = new Point(24, 268)
+            };
+
+            var libs = new[] { "SkiaSharp", "NAudio", "SharpCompress", "SevenZipExtractor", "7z.Libs" };
+            var lblLibs = new Label
+            {
+                Text = string.Join("\n", libs.Select(l => $"  - {l}")),
+                Font = new Font("Yu Gothic UI", 9f),
+                ForeColor = Color.FromArgb(80, 80, 80),
+                AutoSize = true, Location = new Point(24, 292)
+            };
+
+            panel.Controls.AddRange(new Control[] { lblName, lblVersion, lblDesc, lblAuthor, lblLicense, lblRuntime, lnkGitHub, btnCheck, lblUpdateResult, lnkUpdate, lblLibHeader, lblLibs });
+            tab.Controls.Add(panel);
+            return tab;
+        }
+
+        private static async Task<(string tag, string url)> CheckLatestRelease()
+        {
+            if (!_httpClient.DefaultRequestHeaders.Contains("User-Agent"))
+                _httpClient.DefaultRequestHeaders.Add("User-Agent", "LeeyezKai-UpdateChecker");
+
+            var json = await _httpClient.GetStringAsync($"https://api.github.com/repos/{GitHubRepo}/releases/latest");
+            using var doc = JsonDocument.Parse(json);
+            var tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+            var url = doc.RootElement.GetProperty("html_url").GetString() ?? $"https://github.com/{GitHubRepo}/releases";
+            return (tag, url);
+        }
+
+        private static Version? ParseVersion(string tag)
+        {
+            var s = tag.TrimStart('v', 'V');
+            return Version.TryParse(s, out var v) ? v : null;
         }
 
         private static TabPage BuildTab(string title, (string actionKey, string howKey)[] items)

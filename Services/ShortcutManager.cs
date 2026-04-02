@@ -41,11 +41,10 @@ namespace leeyez_kai.Services
             ("ViewModeToggle", "sc.viewmodetoggle", Keys.V),
             ("SetBindingLTR", "sc.setbindingltr", Keys.L),
             ("SetBindingRTL", "sc.setbindingrtl", Keys.R),
+            ("ToggleExpand", "sc.toggleexpand", Keys.Enter),
         };
 
-        private static readonly string FilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "leeyez", "shortcuts.json");
+        private static readonly string FilePath = AppPaths.GetPath("shortcuts.json");
 
         public ShortcutManager()
         {

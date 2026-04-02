@@ -68,6 +68,7 @@ namespace leeyez_kai
             {
                 _nav.NavigateTo(archivePath);
                 _addressBox.Text = archivePath;
+                UpdateBreadcrumb(archivePath);
                 UpdateNavButtons();
                 AutoSaveState();
                 LoadArchive(archivePath, "");

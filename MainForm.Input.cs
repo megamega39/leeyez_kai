@@ -13,7 +13,6 @@ namespace leeyez_kai
     public partial class MainForm
     {
         // ── 全画面 ──
-        private FormWindowState _savedWindowState;
         private Rectangle _savedBounds;
         private bool _isFullscreen;
         private DateTime _lastFullscreenToggle;
@@ -115,6 +114,7 @@ namespace leeyez_kai
                 case "ViewModeToggle": SetViewMode(_viewMode == 1 ? 2 : 1); return true;
                 case "SetBindingLTR": _isRTL = false; _btnBinding.Text = "→"; ShowCurrentFile(); return true;
                 case "SetBindingRTL": _isRTL = true; _btnBinding.Text = "←"; ShowCurrentFile(); return true;
+                case "ToggleExpand": ToggleTreeExpand(); return true;
                 default: return false;
             }
         }
@@ -573,6 +573,16 @@ namespace leeyez_kai
             {
                 MessageBox.Show($"フォルダの作成に失敗しました: {ex.Message}", "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+        }
+
+        private void ToggleTreeExpand()
+        {
+            var node = _folderTree.SelectedNode;
+            if (node == null) return;
+            if (node.IsExpanded)
+                node.Collapse();
+            else
+                node.Expand();
         }
 
         private void RefreshTreeNode()

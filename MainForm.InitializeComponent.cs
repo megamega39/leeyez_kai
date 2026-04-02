@@ -83,7 +83,7 @@ namespace leeyez_kai
             _btnSettings.Click += (s, e) => ShowSettings();
             _btnHelp.Click += (s, e) => ShowHelp();
 
-            // ── アドレスバー ──
+            // ── アドレスバー（ブレッドクラム + テキスト編集切替） ──
             _addressBarPanel = new Panel
             {
                 Dock = DockStyle.Top, Height = 30,
@@ -91,22 +91,40 @@ namespace leeyez_kai
             };
             _addressLabel = new Label
             {
-                Text = Localization.Get("sidebar.address"), AutoSize = true, Location = new Point(6, 6),
-                ForeColor = Color.FromArgb(100, 100, 100), Font = new Font("Yu Gothic UI", 9f)
+                Text = Localization.Get("sidebar.address"), AutoSize = true, Dock = DockStyle.Left,
+                ForeColor = Color.FromArgb(100, 100, 100), Font = new Font("Yu Gothic UI", 9f),
+                Padding = new Padding(2, 4, 4, 0)
             };
             _addressBox = new TextBox
             {
-                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
-                Location = new Point(80, 3), Height = 24,
-                Font = new Font("Yu Gothic UI", 9f), BorderStyle = BorderStyle.FixedSingle
+                Dock = DockStyle.Fill,
+                Font = new Font("Yu Gothic UI", 9f), BorderStyle = BorderStyle.FixedSingle,
+                Visible = false
             };
             _addressBox.KeyDown += (s, e) =>
             {
-                if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; NavigateTo(_addressBox.Text); }
+                if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; NavigateTo(_addressBox.Text); ShowBreadcrumb(); }
+                if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; ShowBreadcrumb(); }
             };
-            _addressBarPanel.Controls.Add(_addressLabel);
+            _addressBox.LostFocus += (s, e) => ShowBreadcrumb();
+
+            _breadcrumbPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, AutoSize = false,
+                WrapContents = false, BackColor = Color.White,
+                Font = new Font("Yu Gothic UI", 9f),
+                Padding = new Padding(0), Margin = new Padding(0)
+            };
+            _breadcrumbPanel.MouseDown += (s, e) =>
+            {
+                // リンクラベル上のクリックは無視（リンクのNavigateToと競合防止）
+                if (_breadcrumbPanel.GetChildAtPoint(e.Location) == null)
+                    ShowAddressEdit();
+            };
+
             _addressBarPanel.Controls.Add(_addressBox);
-            _addressBarPanel.Resize += (s, e) => { _addressBox.Width = _addressBarPanel.Width - 90; };
+            _addressBarPanel.Controls.Add(_breadcrumbPanel);
+            _addressBarPanel.Controls.Add(_addressLabel);
 
             // ── メインスプリッター ──
             _mainSplit = new SplitContainer
@@ -153,8 +171,8 @@ namespace leeyez_kai
                 BackColor = Color.FromArgb(0xF0, 0xF0, 0xF0), Padding = new Padding(2)
             };
             var bsIcon = new Label { Text = "📚", AutoSize = true, Location = new Point(4, 3), Font = new Font("Segoe UI", 10f) };
-            var bsLabel = new Label { Text = "本棚", AutoSize = true, Location = new Point(30, 5), Font = new Font("Yu Gothic UI", 9f) };
-            var bsBtnNew = new Button { Text = "新規", FlatStyle = FlatStyle.Flat, Size = new Size(44, 22), Location = new Point(72, 3), Font = new Font("Yu Gothic UI", 8f) };
+            var bsLabel = new Label { Text = Localization.Get("sidebar.bookshelf"), AutoSize = true, Location = new Point(30, 5), Font = new Font("Yu Gothic UI", 9f) };
+            var bsBtnNew = new Button { Text = Localization.Get("sidebar.new"), FlatStyle = FlatStyle.Flat, Size = new Size(44, 22), Location = new Point(72, 3), Font = new Font("Yu Gothic UI", 8f) };
             bsBtnNew.FlatAppearance.BorderSize = 1;
             bsBtnNew.Click += (s, e) => BookshelfNewCategory();
             _bookshelfToolbar.Controls.AddRange(new Control[] { bsIcon, bsLabel, bsBtnNew });
@@ -202,8 +220,8 @@ namespace leeyez_kai
             _btnNext = CreateViewerButton("\uE76C", "次 (→)", iconFont);
             _btnLast = CreateViewerButton("\uE893", "最後 (End)", iconFont);
             _btnFitWindow = CreateViewerButton("\uE740", "ウィンドウに合わせる (W)", iconFont);
-            _btnFitWidth = new ToolStripButton { ToolTipText = "幅に合わせる", AutoSize = false, Size = new Size(32, 28), DisplayStyle = ToolStripItemDisplayStyle.Image, Image = DrawFitIcon(true), Margin = new Padding(1, 2, 1, 2) };
-            _btnFitHeight = new ToolStripButton { ToolTipText = "高さに合わせる", AutoSize = false, Size = new Size(32, 28), DisplayStyle = ToolStripItemDisplayStyle.Image, Image = DrawFitIcon(false), Margin = new Padding(1, 2, 1, 2) };
+            _btnFitWidth = new ToolStripButton { ToolTipText = Localization.Get("viewer.fitwidth"), AutoSize = false, Size = new Size(32, 28), DisplayStyle = ToolStripItemDisplayStyle.Image, Image = DrawFitIcon(true), Margin = new Padding(1, 2, 1, 2) };
+            _btnFitHeight = new ToolStripButton { ToolTipText = Localization.Get("viewer.fitheight"), AutoSize = false, Size = new Size(32, 28), DisplayStyle = ToolStripItemDisplayStyle.Image, Image = DrawFitIcon(false), Margin = new Padding(1, 2, 1, 2) };
             _btnZoomIn = CreateViewerButton("\uE8A3", "拡大 (Ctrl++)", iconFont);
             _btnZoomOut = CreateViewerButton("\uE71F", "縮小 (Ctrl+-)", iconFont);
             _zoomLabel = new ToolStripLabel("100%")
@@ -214,7 +232,7 @@ namespace leeyez_kai
             _btnOriginal = CreateViewerButton("1:1", "原寸", "Yu Gothic UI", 11f);
             _btnBinding = new ToolStripButton("←")
             {
-                ToolTipText = "綴じ方向 (B)", AutoSize = false, Size = new Size(36, 30),
+                ToolTipText = Localization.Get("viewer.binding"), AutoSize = false, Size = new Size(36, 30),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
                 Font = new Font("Yu Gothic UI", 15f, FontStyle.Bold),
                 ForeColor = Color.FromArgb(60, 60, 60),
@@ -280,7 +298,7 @@ namespace leeyez_kai
                     var sizeLabel = _statusBar.Items["statusFileSize"];
                     if (dimLabel != null) dimLabel.Text = $"{w} × {h}";
                     if (sizeLabel != null) sizeLabel.Text = fi.SizeString;
-                    _statusRight.Text = "ウィンドウ合わせ";
+                    _statusRight.Text = Localization.Get("viewer.fitwindow");
                 }
             };
             _imageViewer.WheelNavigate += (delta) => GoToFile(_currentFileIndex + delta * GetPagesPerView());

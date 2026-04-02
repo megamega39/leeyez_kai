@@ -63,6 +63,7 @@ namespace leeyez_kai
         private Panel _addressBarPanel = null!;
         private TextBox _addressBox = null!;
         private Label _addressLabel = null!;
+        private FlowLayoutPanel _breadcrumbPanel = null!;
 
         private SplitContainer _mainSplit = null!;
         private SplitContainer _sidebarSplit = null!;
@@ -245,6 +246,7 @@ namespace leeyez_kai
             _archiveDebounce?.Dispose();
             _debounceTimer?.Dispose();
             _prefetchCts?.Dispose();
+            ArchiveService.CloseCache();
         }
 
         // ── 設定・ヘルプ ──

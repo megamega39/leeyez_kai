@@ -26,6 +26,29 @@ namespace leeyez_kai
         public static string GetExt(string name) => Path.GetExtension(name).ToLowerInvariant();
     }
 
+    public static class AppPaths
+    {
+        private static readonly Lazy<string> _dataDir = new(() =>
+        {
+            var exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            var marker = Path.Combine(exeDir, "portable");
+            if (File.Exists(marker))
+            {
+                var dir = Path.Combine(exeDir, "data");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+            var appData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "leeyez");
+            Directory.CreateDirectory(appData);
+            return appData;
+        });
+
+        public static string DataDir => _dataDir.Value;
+        public static bool IsPortable => _dataDir.Value.StartsWith(AppDomain.CurrentDomain.BaseDirectory);
+        public static string GetPath(string fileName) => Path.Combine(DataDir, fileName);
+    }
+
     public static class AppConstants
     {
         public const int ImageCacheSize = 50;

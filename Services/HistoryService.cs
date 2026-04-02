@@ -12,10 +12,7 @@ namespace leeyez_kai.Services
     {
         private const int MaxEntries = 500;
 
-        private static readonly string HistoryFile = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "leeyez",
-            "history.json");
+        private static readonly string HistoryFile = AppPaths.GetPath("history.json");
 
         private static readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
         private readonly object _lock = new();

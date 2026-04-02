@@ -9,9 +9,7 @@ namespace leeyez_kai.Services
 {
     public class BookshelfService
     {
-        private static readonly string FilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "leeyez", "bookshelf.json");
+        private static readonly string FilePath = AppPaths.GetPath("bookshelf.json");
 
         private BookshelfData _data = new();
 

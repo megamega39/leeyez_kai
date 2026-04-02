@@ -308,6 +308,18 @@ namespace leeyez_kai.Services
                     _suppressSelect = true;
                     try
                     {
+                        // お気に入り配下で選択中ならお気に入り内を優先検索
+                        var currentNode = _treeView.SelectedNode;
+                        if (currentNode != null && IsUnderFavorites(currentNode))
+                        {
+                            var favArchiveNode = FindArchiveNodeInFavorites(path);
+                            if (favArchiveNode != null)
+                            {
+                                SelectAndReveal(favArchiveNode);
+                                return;
+                            }
+                        }
+
                         var archiveNode = FindArchiveNode(folderPath, archiveFileName);
                         if (archiveNode != null)
                         {
@@ -484,6 +496,81 @@ namespace leeyez_kai.Services
             {
                 if (child.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
                     return child;
+            }
+
+            // 見つからない場合、親ノードの子を再列挙して再検索
+            // （アプリ起動後にダウンロードされたファイル等、展開後に追加されたファイル対応）
+            RefreshNode(parentNode);
+            foreach (TreeNode child in parentNode.Nodes)
+            {
+                if (child.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                    return child;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// お気に入り配下から書庫ファイルノードを探す
+        /// （書庫ファイルが直接お気に入りに登録されている場合、またはお気に入りフォルダ配下にある場合）
+        /// </summary>
+        private TreeNode? FindArchiveNodeInFavorites(string archivePath)
+        {
+            var favNode = FindNodeByTag("FAVORITES");
+            if (favNode == null) return null;
+
+            var archiveFileName = Path.GetFileName(archivePath);
+            var parentFolder = Path.GetDirectoryName(archivePath);
+
+            foreach (TreeNode child in favNode.Nodes)
+            {
+                var tag = child.Tag?.ToString();
+                if (tag == null) continue;
+
+                // 書庫ファイルが直接お気に入りに登録されている場合
+                if (tag.Equals(archivePath, StringComparison.OrdinalIgnoreCase))
+                    return child;
+
+                // お気に入りフォルダ配下に書庫がある場合
+                if (parentFolder != null && Directory.Exists(tag)
+                    && parentFolder.Equals(tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    ExpandNode(child);
+                    foreach (TreeNode grandChild in child.Nodes)
+                    {
+                        if (grandChild.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                            return grandChild;
+                    }
+                    // 見つからなければ再列挙
+                    RefreshNode(child);
+                    foreach (TreeNode grandChild in child.Nodes)
+                    {
+                        if (grandChild.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                            return grandChild;
+                    }
+                }
+
+                // お気に入りフォルダのさらに下の階層にある場合
+                if (parentFolder != null && Directory.Exists(tag)
+                    && parentFolder.StartsWith(tag + "\\", StringComparison.OrdinalIgnoreCase))
+                {
+                    string relative = parentFolder.Substring(tag.Length).TrimStart('\\', '/');
+                    var parentNode = DrillDown(child, relative);
+                    if (parentNode != null)
+                    {
+                        ExpandNode(parentNode);
+                        foreach (TreeNode grandChild in parentNode.Nodes)
+                        {
+                            if (grandChild.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                                return grandChild;
+                        }
+                        RefreshNode(parentNode);
+                        foreach (TreeNode grandChild in parentNode.Nodes)
+                        {
+                            if (grandChild.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                                return grandChild;
+                        }
+                    }
+                }
             }
             return null;
         }

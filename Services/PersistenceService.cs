@@ -7,10 +7,7 @@ namespace leeyez_kai.Services
 {
     public static class PersistenceService
     {
-        private static readonly string SettingsFile = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "leeyez",
-            "state.json");
+        private static readonly string SettingsFile = AppPaths.GetPath("state.json");
 
         public static void SaveState(AppState state)
         {
