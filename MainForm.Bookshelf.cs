@@ -47,6 +47,7 @@ namespace leeyez_kai
         private void ToggleBookshelf()
         {
             _isBookshelfMode = !_isBookshelfMode;
+            if (_isBookshelfMode) _isHistoryMode = false;
 
             // サイドバーのPanel1を操作
             var panel = _sidebarSplit.Panel1;
@@ -56,8 +57,11 @@ namespace leeyez_kai
             {
                 BuildBookshelfTree();
                 _folderTree.Visible = false;
+                _historyList.Visible = false;
+                _historyToolbar.Visible = false;
                 _bookshelfToolbar.Visible = true;
                 _bookshelfTree.Visible = true;
+                _btnHistory.BackColor = Color.Transparent;
 
                 // Dock順序を再設定（Fill→Top→Top の順）
                 panel.Controls.SetChildIndex(_bookshelfTree, 0);   // Fill: 最背面
@@ -75,7 +79,7 @@ namespace leeyez_kai
                 panel.Controls.SetChildIndex(_folderTree, 0);
 
                 _sidebarLabel.Parent.Visible = true; // ヘッダーラベルを再表示
-                _sidebarLabel.Text = "フォルダ";
+                _sidebarLabel.Text = i18n.Localization.Get("sidebar.folder");
                 _btnBookshelf.BackColor = Color.Transparent;
             }
 

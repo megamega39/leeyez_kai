@@ -11,32 +11,40 @@ namespace leeyez_kai.Services
     {
         private Dictionary<string, Keys> _bindings = new();
 
-        // アクション名一覧
-        public static readonly (string id, string label, Keys defaultKey)[] AllActions = new[]
+        // アクション名一覧（labelKeyはi18nキー）
+        public static readonly (string id, string labelKey, Keys defaultKey)[] AllActions = new[]
         {
-            ("PrevPage", "前のページ", Keys.Left),
-            ("NextPage", "次のページ", Keys.Right),
-            ("FirstPage", "最初のページ", Keys.Home),
-            ("LastPage", "最後のページ", Keys.End),
-            ("GoBack", "戻る", Keys.Alt | Keys.Left),
-            ("GoForward", "進む", Keys.Alt | Keys.Right),
-            ("GoUp", "上の階層", Keys.Alt | Keys.Up),
-            ("Refresh", "更新", Keys.F5),
-            ("Help", "ヘルプ", Keys.F1),
-            ("Fullscreen", "全画面切替", Keys.F11),
-            ("FitWindow", "ウィンドウに合わせる", Keys.W),
-            ("ZoomIn", "拡大", Keys.Control | Keys.Oemplus),
-            ("ZoomOut", "縮小", Keys.Control | Keys.OemMinus),
-            ("ZoomReset", "等倍", Keys.Control | Keys.D0),
-            ("Binding", "綴じ方向切替", Keys.B),
-            ("SingleView", "単頁表示", Keys.D1),
-            ("SpreadView", "見開き表示", Keys.D2),
-            ("AutoView", "自動見開き", Keys.D3),
+            ("PrevPage", "sc.prevpage", Keys.Left),
+            ("NextPage", "sc.nextpage", Keys.Right),
+            ("FirstPage", "sc.firstpage", Keys.Home),
+            ("LastPage", "sc.lastpage", Keys.End),
+            ("GoBack", "sc.goback", Keys.Alt | Keys.Left),
+            ("GoForward", "sc.goforward", Keys.Alt | Keys.Right),
+            ("GoUp", "sc.goup", Keys.Alt | Keys.Up),
+            ("Refresh", "sc.refresh", Keys.F5),
+            ("Help", "sc.help", Keys.F1),
+            ("Fullscreen", "sc.fullscreen", Keys.F11),
+            ("FitWindow", "sc.fitwindow", Keys.W),
+            ("ZoomIn", "sc.zoomin", Keys.Control | Keys.Oemplus),
+            ("ZoomOut", "sc.zoomout", Keys.Control | Keys.OemMinus),
+            ("ZoomReset", "sc.zoomreset", Keys.Control | Keys.D0),
+            ("Binding", "sc.binding", Keys.B),
+            ("SingleView", "sc.singleview", Keys.D1),
+            ("SpreadView", "sc.spreadview", Keys.D2),
+            ("AutoView", "sc.autoview", Keys.D3),
+            ("PrevFolder", "sc.prevfolder", Keys.Up),
+            ("NextFolder", "sc.nextfolder", Keys.Down),
+            ("CopyImage", "sc.copyimage", Keys.Control | Keys.C),
+            ("RotateCW", "sc.rotatecw", Keys.Control | Keys.R),
+            ("RotateCCW", "sc.rotateccw", Keys.Control | Keys.Shift | Keys.R),
+            ("ToggleBookshelf", "sc.togglebookshelf", Keys.C),
+            ("ViewModeToggle", "sc.viewmodetoggle", Keys.V),
+            ("SetBindingLTR", "sc.setbindingltr", Keys.L),
+            ("SetBindingRTL", "sc.setbindingrtl", Keys.R),
+            ("ToggleExpand", "sc.toggleexpand", Keys.Enter),
         };
 
-        private static readonly string FilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "leeyez", "shortcuts.json");
+        private static readonly string FilePath = AppPaths.GetPath("shortcuts.json");
 
         public ShortcutManager()
         {
@@ -82,7 +90,7 @@ namespace leeyez_kai.Services
                         _bindings[kv.Key] = (Keys)kv.Value;
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to load shortcut bindings: {ex.Message}"); }
         }
 
         public void Save()
@@ -94,7 +102,7 @@ namespace leeyez_kai.Services
                 var data = _bindings.ToDictionary(kv => kv.Key, kv => (int)kv.Value);
                 File.WriteAllText(FilePath, JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true }));
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to save shortcut bindings: {ex.Message}"); }
         }
 
         public static string KeyToString(Keys key)

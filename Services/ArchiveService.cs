@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using SevenZipExtractor;
 using SharpCompress.Archives;
 using SharpCompress.Common;
@@ -26,44 +27,42 @@ namespace leeyez_kai.Services
         private static string? _cachedSevenZipLib;
         private static readonly object _archiveLock = new();
 
-        private static ArchiveFile? GetOrOpenArchive(string archivePath, string sevenZipLibPath)
+        /// <summary>書庫ハンドルを取得または新規オープン（呼び出し元で_archiveLockを取得すること）</summary>
+        private static ArchiveFile? GetOrOpenArchiveUnsafe(string archivePath, string sevenZipLibPath)
         {
-            lock (_archiveLock)
+            // キャッシュヒット検索
+            var node = _archiveCache.First;
+            while (node != null)
             {
-                // キャッシュヒット検索
-                var node = _archiveCache.First;
-                while (node != null)
+                if (node.Value.path == archivePath)
                 {
-                    if (node.Value.path == archivePath)
-                    {
-                        // LRU: 先頭に移動
-                        _archiveCache.Remove(node);
-                        _archiveCache.AddFirst(node);
-                        return node.Value.archive;
-                    }
-                    node = node.Next;
+                    // LRU: 先頭に移動
+                    _archiveCache.Remove(node);
+                    _archiveCache.AddFirst(node);
+                    return node.Value.archive;
                 }
+                node = node.Next;
+            }
 
-                // キャッシュミス: 上限超過なら最古を閉じる
-                while (_archiveCache.Count >= MaxArchiveHandles)
-                {
-                    var oldest = _archiveCache.Last!.Value;
-                    try { oldest.archive.Dispose(); } catch { }
-                    _archiveCache.RemoveLast();
-                }
+            // キャッシュミス: 上限超過なら最古を閉じる
+            while (_archiveCache.Count >= MaxArchiveHandles)
+            {
+                var oldest = _archiveCache.Last!.Value;
+                try { oldest.archive.Dispose(); } catch { }
+                _archiveCache.RemoveLast();
+            }
 
-                try
-                {
-                    var archive = new ArchiveFile(archivePath, sevenZipLibPath);
-                    _cachedSevenZipLib = sevenZipLibPath;
-                    _archiveCache.AddFirst((archivePath, archive));
-                    return archive;
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log($"ArchiveFile open failed: {ex.Message}");
-                    return null;
-                }
+            try
+            {
+                var archive = new ArchiveFile(archivePath, sevenZipLibPath);
+                _cachedSevenZipLib = sevenZipLibPath;
+                _archiveCache.AddFirst((archivePath, archive));
+                return archive;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"ArchiveFile open failed: {ex.Message}");
+                return null;
             }
         }
 
@@ -73,7 +72,7 @@ namespace leeyez_kai.Services
             lock (_archiveLock)
             {
                 foreach (var (_, archive) in _archiveCache)
-                    try { archive.Dispose(); } catch { }
+                    try { archive.Dispose(); } catch (Exception ex) { Logger.Log($"Failed to dispose archive: {ex.Message}"); }
                 _archiveCache.Clear();
             }
         }
@@ -86,10 +85,10 @@ namespace leeyez_kai.Services
             bool szipSuccess = false;
             try
             {
-                var archive = GetOrOpenArchive(archivePath, sevenZipLibPath);
-                if (archive != null)
+                lock (_archiveLock)
                 {
-                    lock (_archiveLock)
+                    var archive = GetOrOpenArchiveUnsafe(archivePath, sevenZipLibPath);
+                    if (archive != null)
                     {
                         foreach (var entry in archive.Entries)
                         {
@@ -101,8 +100,8 @@ namespace leeyez_kai.Services
                                 IsFolder = entry.IsFolder
                             });
                         }
+                        szipSuccess = true;
                     }
-                    szipSuccess = true;
                 }
             }
             catch (Exception ex)
@@ -134,7 +133,7 @@ namespace leeyez_kai.Services
                         }
                         if (entries.Any()) break;
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Log($"Failed to list archive entries: {ex.Message}"); }
                 }
             }
 
@@ -147,10 +146,10 @@ namespace leeyez_kai.Services
 
             try
             {
-                var archive = GetOrOpenArchive(archivePath, sevenZipLibPath);
-                if (archive != null)
+                lock (_archiveLock)
                 {
-                    lock (_archiveLock)
+                    var archive = GetOrOpenArchiveUnsafe(archivePath, sevenZipLibPath);
+                    if (archive != null)
                     {
                         var entry = archive.Entries.FirstOrDefault(e => NormalizeEntryPath(e.FileName) == targetKey);
                         if (entry != null)
@@ -187,40 +186,55 @@ namespace leeyez_kai.Services
                         return ms;
                     }
                 }
-                catch { }
+                catch (Exception ex) { Logger.Log($"Failed to extract archive entry stream: {ex.Message}"); }
             }
 
             return null;
         }
 
         /// <summary>書庫内の全画像を一括展開（書庫を1回だけ開く）</summary>
-        public static Dictionary<string, byte[]> ExtractAll(string archivePath, string sevenZipLibPath, HashSet<string> targetEntries)
+        public static Dictionary<string, byte[]> ExtractAll(string archivePath, string sevenZipLibPath, HashSet<string> targetEntries, CancellationToken ct = default)
         {
             var result = new Dictionary<string, byte[]>();
             if (!File.Exists(archivePath) || targetEntries.Count == 0) return result;
 
             try
             {
-                var archive = GetOrOpenArchive(archivePath, sevenZipLibPath);
-                if (archive != null)
+                // エントリ一覧の取得だけロック内で行い、展開はエントリごとに短いロックで実行
+                // → 書庫切り替え時にロックが長時間保持されず、次の書庫を即座に開ける
+                List<(string key, SevenZipExtractor.Entry entry)>? targets = null;
+                lock (_archiveLock)
                 {
-                    lock (_archiveLock)
+                    var archive = GetOrOpenArchiveUnsafe(archivePath, sevenZipLibPath);
+                    if (archive != null)
                     {
+                        targets = new();
                         foreach (var entry in archive.Entries)
                         {
-                            var key = NormalizeEntryPath(entry.FileName);
-                            if (!targetEntries.Contains(key)) continue;
                             if (entry.IsFolder) continue;
+                            var key = NormalizeEntryPath(entry.FileName);
+                            if (targetEntries.Contains(key))
+                                targets.Add((key, entry));
+                        }
+                    }
+                }
 
-                            try
+                if (targets != null)
+                {
+                    foreach (var (key, entry) in targets)
+                    {
+                        if (ct.IsCancellationRequested) break;
+                        try
+                        {
+                            lock (_archiveLock)
                             {
                                 var ms = new MemoryStream();
                                 entry.Extract(ms);
                                 result[key] = ms.ToArray();
                                 ms.Dispose();
                             }
-                            catch { }
                         }
+                        catch (Exception ex) { Logger.Log($"Failed to extract archive entry (7zip): {ex.Message}"); }
                     }
                     Logger.Log($"ExtractAll: {result.Count}/{targetEntries.Count} extracted from {Path.GetFileName(archivePath)}");
                     return result;
@@ -239,6 +253,7 @@ namespace leeyez_kai.Services
                 using var archive = ArchiveFactory.Open(stream);
                 foreach (var entry in archive.Entries)
                 {
+                    if (ct.IsCancellationRequested) break;
                     if (entry.Key == null || entry.IsDirectory) continue;
                     var key = NormalizeEntryPath(entry.Key);
                     if (!targetEntries.Contains(key)) continue;
@@ -251,10 +266,10 @@ namespace leeyez_kai.Services
                         result[key] = ms.ToArray();
                         ms.Dispose();
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Log($"Failed to extract archive entry (SharpCompress): {ex.Message}"); }
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to open archive for bulk extraction: {ex.Message}"); }
 
             return result;
         }

@@ -2,6 +2,8 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
+using SkiaSharp;
+using leeyez_kai.Services;
 
 namespace leeyez_kai.Controls
 {
@@ -10,8 +12,9 @@ namespace leeyez_kai.Controls
     /// </summary>
     public class HoverPreviewForm : Form
     {
-        private Bitmap? _image;
+        private SKBitmap? _skImage;
         private readonly PictureBox _pictureBox;
+        private static readonly Pen BorderPen = new(Color.FromArgb(100, 100, 100), 1);
 
         public HoverPreviewForm()
         {
@@ -42,19 +45,26 @@ namespace leeyez_kai.Controls
                 var cp = base.CreateParams;
                 cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW
                 cp.ExStyle |= 0x00000020; // WS_EX_TRANSPARENT (マウス透過)
+                cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE (アクティブ化しない)
                 return cp;
             }
         }
 
-        public void ShowPreview(Bitmap bmp, Point screenPos)
+        public void ShowPreview(SKBitmap skBmp, Point screenPos)
         {
-            _image = bmp;
-            _pictureBox.Image = bmp;
+            // Dispose old GDI+ image and SKBitmap
+            _pictureBox.Image?.Dispose();
+            _skImage?.Dispose();
+            _skImage = skBmp;
+
+            // Convert SKBitmap → GDI+ Bitmap for PictureBox display
+            var gdiBmp = SKBitmapHelper.ToGdiBitmap(skBmp);
+            _pictureBox.Image = gdiBmp;
 
             // 画像アスペクトに合わせてウィンドウサイズ調整
-            if (bmp != null)
+            if (skBmp != null)
             {
-                float aspect = (float)bmp.Width / bmp.Height;
+                float aspect = (float)skBmp.Width / skBmp.Height;
                 int maxSize = 320;
                 int w, h;
                 if (aspect > 1)
@@ -84,17 +94,16 @@ namespace leeyez_kai.Controls
         public void HidePreview()
         {
             Hide();
+            _pictureBox.Image?.Dispose();
             _pictureBox.Image = null;
-            _image?.Dispose();
-            _image = null;
+            _skImage?.Dispose();
+            _skImage = null;
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            // 薄いボーダー
-            using var pen = new Pen(Color.FromArgb(100, 100, 100), 1);
-            e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            e.Graphics.DrawRectangle(BorderPen, 0, 0, Width - 1, Height - 1);
         }
     }
 }

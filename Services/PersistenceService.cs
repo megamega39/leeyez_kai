@@ -7,10 +7,7 @@ namespace leeyez_kai.Services
 {
     public static class PersistenceService
     {
-        private static readonly string SettingsFile = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "leeyez",
-            "state.json");
+        private static readonly string SettingsFile = AppPaths.GetPath("state.json");
 
         public static void SaveState(AppState state)
         {
@@ -26,7 +23,7 @@ namespace leeyez_kai.Services
                 File.WriteAllText(SettingsFile, json);
                 Logger.Log($"State saved: LastPath={state.LastPath}, LastViewingFile={state.LastViewingFile}, LastFileIndex={state.LastFileIndex}");
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to save state: {ex.Message}"); }
         }
 
         public static AppState? LoadState()
@@ -39,7 +36,7 @@ namespace leeyez_kai.Services
                     return JsonSerializer.Deserialize<AppState>(json);
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to load state: {ex.Message}"); }
             return null;
         }
     }

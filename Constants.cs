@@ -26,13 +26,36 @@ namespace leeyez_kai
         public static string GetExt(string name) => Path.GetExtension(name).ToLowerInvariant();
     }
 
+    public static class AppPaths
+    {
+        private static readonly Lazy<string> _dataDir = new(() =>
+        {
+            var exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            var marker = Path.Combine(exeDir, "portable");
+            if (File.Exists(marker))
+            {
+                var dir = Path.Combine(exeDir, "data");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
+            var appData = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "leeyez");
+            Directory.CreateDirectory(appData);
+            return appData;
+        });
+
+        public static string DataDir => _dataDir.Value;
+        public static bool IsPortable => _dataDir.Value.StartsWith(AppDomain.CurrentDomain.BaseDirectory);
+        public static string GetPath(string fileName) => Path.Combine(DataDir, fileName);
+    }
+
     public static class AppConstants
     {
         public const int ImageCacheSize = 50;
-        public const int PrefetchCount = 10;
+        public const int PrefetchCount = 8;
         public const int DebounceMs = 16; // ~60fps
         public const int AutoSaveMs = 500;
-        public const int FileStreamBuffer = 81920;
+        public const int FileStreamBuffer = 262144;
         public const int ZoomStepPercent = 25;
         public const float SpreadThreshold = 1.0f; // 縦横比がこの値以下なら縦向き（見開き対象）
         public const int ZoomMin = 25;

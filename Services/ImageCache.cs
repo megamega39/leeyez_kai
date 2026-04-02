@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
+using SkiaSharp;
 
 namespace leeyez_kai.Services
 {
     /// <summary>
-    /// GDI+ Bitmap をキャッシュ（変換済みなので表示は即座）
+    /// SKBitmap をキャッシュ（変換済みなので表示は即座）
     /// </summary>
     public class ImageCache : IDisposable
     {
@@ -16,7 +16,7 @@ namespace leeyez_kai.Services
 
         private class CacheEntry
         {
-            public Bitmap Bitmap { get; set; } = null!;
+            public SKBitmap Bitmap { get; set; } = null!;
             public int OriginalWidth { get; set; }
             public int OriginalHeight { get; set; }
             public LinkedListNode<string> LruNode { get; set; } = null!;
@@ -27,7 +27,7 @@ namespace leeyez_kai.Services
             _maxEntries = maxEntries;
         }
 
-        public Bitmap? Get(string key)
+        public SKBitmap? Get(string key)
         {
             lock (_lock)
             {
@@ -51,20 +51,18 @@ namespace leeyez_kai.Services
             }
         }
 
-        public void Put(string key, Bitmap bitmap, int origW, int origH)
+        /// <summary>キャッシュに追加。既にキーが存在する場合は false を返し bitmap を変更しない。</summary>
+        public bool Put(string key, SKBitmap bitmap, int origW, int origH)
         {
             lock (_lock)
             {
                 if (_cache.ContainsKey(key))
                 {
+                    // 既存を維持（表示中の参照を壊さない）。LRU更新のみ。
                     var existing = _cache[key];
-                    existing.Bitmap.Dispose();
-                    existing.Bitmap = bitmap;
-                    existing.OriginalWidth = origW;
-                    existing.OriginalHeight = origH;
                     _lruOrder.Remove(existing.LruNode);
                     _lruOrder.AddFirst(existing.LruNode);
-                    return;
+                    return false;
                 }
 
                 while (_cache.Count >= _maxEntries && _lruOrder.Last != null)
@@ -80,6 +78,7 @@ namespace leeyez_kai.Services
 
                 var node = _lruOrder.AddFirst(key);
                 _cache[key] = new CacheEntry { Bitmap = bitmap, OriginalWidth = origW, OriginalHeight = origH, LruNode = node };
+                return true;
             }
         }
 

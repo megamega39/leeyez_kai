@@ -1,7 +1,5 @@
 using System;
 using System.Drawing;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -17,9 +15,9 @@ namespace leeyez_kai.Controls
     /// </summary>
     public class ImageViewer : Panel
     {
-        private Bitmap? _displayBitmap;
-        private Bitmap? _spreadDisplay1;
-        private Bitmap? _spreadDisplay2;
+        private SKBitmap? _displayBitmap;
+        private SKBitmap? _spreadDisplay1;
+        private SKBitmap? _spreadDisplay2;
         private int _origW, _origH;
         private readonly object _renderLock = new();
 
@@ -28,7 +26,7 @@ namespace leeyez_kai.Controls
         private int _animFrameCount;
         private int _animCurrentFrame;
         private System.Windows.Forms.Timer? _animTimer;
-        private Bitmap?[]? _animGdiFrames;
+        private SKBitmap?[]? _animSkFrames;
 
         // ズーム・スクロール
         private float _zoom = 1.0f;
@@ -112,9 +110,9 @@ namespace leeyez_kai.Controls
         public int ImageHeight => _origH;
 
         /// <summary>
-        /// GDI+ Bitmapを直接表示（キャッシュヒット時、最速）
+        /// SKBitmapを直接表示（キャッシュヒット時、最速）
         /// </summary>
-        public void ShowBitmap(Bitmap? bmp, int origW, int origH)
+        public void ShowBitmap(SKBitmap? bmp, int origW, int origH)
         {
             lock (_renderLock)
             {
@@ -131,7 +129,7 @@ namespace leeyez_kai.Controls
             Invalidate();
         }
 
-        public void ShowSpread(Bitmap? left, Bitmap? right)
+        public void ShowSpread(SKBitmap? left, SKBitmap? right)
         {
             lock (_renderLock)
             {
@@ -161,17 +159,14 @@ namespace leeyez_kai.Controls
         #region Fast Decode (delegated to ImageDecoder)
 
         /// <summary>ImageDecoder委譲</summary>
-        public static Bitmap? FastDecode(Stream stream, string ext, int maxW, int maxH, out int origW, out int origH)
+        public static SKBitmap? FastDecode(Stream stream, string ext, int maxW, int maxH, out int origW, out int origH)
             => ImageDecoder.FastDecode(stream, ext, maxW, maxH, out origW, out origH);
-
-        public static Bitmap SKBitmapToGdiBitmap(SKBitmap skBitmap)
-            => ImageDecoder.SKBitmapToGdiBitmap(skBitmap);
 
         // アニメーション用にStreamのコピーを保持（SKCodecがStreamを参照し続けるため）
         private MemoryStream? _animStream;
 
         /// <summary>アニメーション判定付きデコード（ImageViewer内部用）</summary>
-        public Bitmap? LoadFromStream(Stream stream, string ext, int maxW, int maxH, out int origW, out int origH)
+        public SKBitmap? LoadFromStream(Stream stream, string ext, int maxW, int maxH, out int origW, out int origH)
         {
             origW = 0; origH = 0;
             try
@@ -195,16 +190,18 @@ namespace leeyez_kai.Controls
                 if (ext == ".gif" || ext == ".webp")
                 {
                     SKCodec? codec = null;
-                    try { codec = SKCodec.Create(ms); } catch { }
+                    try { codec = SKCodec.Create(ms); } catch (Exception ex) { Logger.Log($"Failed to create SKCodec: {ex.Message}"); }
 
                     if (codec != null && codec.FrameCount > 1)
                     {
+                        // アニメーション: msの所有権をStartAnimationに移譲（_animStreamで保持）
                         _animStream = ms;
                         origW = codec.Info.Width;
                         origH = codec.Info.Height;
                         StartAnimation(codec);
                         return null;
                     }
+                    // アニメーションではない: codecを閉じて静止画パスへ（msはcodecが閉じた後に再利用可能）
                     codec?.Dispose();
                     ms.Position = 0;
                 }
@@ -249,7 +246,7 @@ namespace leeyez_kai.Controls
             _animCodec = codec;
             _animFrameCount = Math.Min(codec.FrameCount, MaxAnimFrames);
             _animCurrentFrame = 0;
-            _animGdiFrames = new Bitmap?[_animFrameCount];
+            _animSkFrames = new SKBitmap?[_animFrameCount];
 
             // 表示サイズに縮小（メモリ節約＋変換高速化）
             int maxW = Math.Max(Width, 640);
@@ -270,7 +267,7 @@ namespace leeyez_kai.Controls
             var firstGdi = DecodeAnimFrame(0, decW, decH);
             if (firstGdi != null)
             {
-                _animGdiFrames[0] = firstGdi;
+                _animSkFrames[0] = firstGdi;
                 lock (_renderLock)
                 {
                     _displayBitmap = firstGdi;
@@ -295,15 +292,17 @@ namespace leeyez_kai.Controls
                 {
                     for (int i = 1; i < _animFrameCount; i++)
                     {
-                        if (_animCodec == null || _animGdiFrames == null) break;
-                        _animGdiFrames[i] = DecodeAnimFrame(i, decW, decH);
+                        var frames = _animSkFrames;
+                        if (_animCodec == null || frames == null) break;
+                        var decoded = DecodeAnimFrame(i, decW, decH);
+                        Volatile.Write(ref frames[i], decoded);
                     }
                 }
-                catch { }
+                catch (Exception ex) { Logger.Log($"Failed to decode animation frames: {ex.Message}"); }
             });
         }
 
-        private Bitmap? DecodeAnimFrame(int index, int targetW, int targetH)
+        private SKBitmap? DecodeAnimFrame(int index, int targetW, int targetH)
         {
             if (_animCodec == null) return null;
             try
@@ -312,14 +311,14 @@ namespace leeyez_kai.Controls
                 using var skBmp = new SKBitmap(info);
                 _animCodec.GetPixels(info, skBmp.GetPixels(), new SKCodecOptions(index));
 
-                // 表示サイズに縮小してからGDI+変換（メモリ節約）
+                // 表示サイズに縮小（メモリ節約）
                 if (targetW < skBmp.Width || targetH < skBmp.Height)
                 {
                     var resizeInfo = new SKImageInfo(targetW, targetH, SKColorType.Bgra8888, SKAlphaType.Premul);
-                    using var resized = skBmp.Resize(resizeInfo, SKFilterQuality.Low);
-                    if (resized != null) return SKBitmapToGdiBitmap(resized);
+                    var resized = skBmp.Resize(resizeInfo, SKFilterQuality.Low);
+                    if (resized != null) return resized;
                 }
-                return SKBitmapToGdiBitmap(skBmp);
+                return skBmp.Copy(SKColorType.Bgra8888);
             }
             catch { return null; }
         }
@@ -328,10 +327,10 @@ namespace leeyez_kai.Controls
         {
             try
             {
-                if (_animGdiFrames == null || _animCodec == null) return;
+                if (_animSkFrames == null || _animCodec == null) return;
                 _animCurrentFrame = (_animCurrentFrame + 1) % _animFrameCount;
 
-                var frame = _animGdiFrames[_animCurrentFrame];
+                var frame = Volatile.Read(ref _animSkFrames[_animCurrentFrame]);
                 if (frame != null)
                 {
                     lock (_renderLock) { _displayBitmap = frame; }
@@ -354,10 +353,10 @@ namespace leeyez_kai.Controls
             _animTimer?.Stop();
             _animTimer?.Dispose();
             _animTimer = null;
-            if (_animGdiFrames != null)
+            if (_animSkFrames != null)
             {
-                foreach (var f in _animGdiFrames) f?.Dispose();
-                _animGdiFrames = null;
+                foreach (var f in _animSkFrames) f?.Dispose();
+                _animSkFrames = null;
             }
             _animCodec?.Dispose();
             _animCodec = null;
@@ -384,26 +383,19 @@ namespace leeyez_kai.Controls
                     else if (_displayBitmap != null)
                         PaintSingleFast(e);
                 }
-                catch { }
+                catch (Exception ex) { Logger.Log($"Failed to paint image: {ex.Message}"); }
             }
         }
 
         private void PaintSingleFast(PaintEventArgs e)
         {
             if (_displayBitmap == null) return;
-            var (drawRect, scale) = CalcDrawRect(_displayBitmap.Width, _displayBitmap.Height);
+            // 元画像サイズでスケール計算（100% = 元画像の等倍）
+            int scaleW = _origW > 0 ? _origW : _displayBitmap.Width;
+            int scaleH = _origH > 0 ? _origH : _displayBitmap.Height;
+            var (drawRect, scale) = CalcDrawRect(scaleW, scaleH);
 
-            // 描画領域が小さいか元画像が小さい場合はGDI+フォールバック（安全）
-            if (_displayBitmap.Width < 16 || _displayBitmap.Height < 16 ||
-                _displayBitmap.PixelFormat != PixelFormat.Format32bppPArgb)
-            {
-                e.Graphics.InterpolationMode = InterpolationMode.Low;
-                e.Graphics.DrawImage(_displayBitmap, drawRect);
-            }
-            else
-            {
-                BlitBitmap(e.Graphics, _displayBitmap, drawRect);
-            }
+            BlitBitmap(e.Graphics, _displayBitmap, drawRect);
 
             StatusChanged?.Invoke($"{(int)(scale * _zoom * 100)}%");
         }
@@ -418,15 +410,15 @@ namespace leeyez_kai.Controls
 
             if (_spreadDisplay1 != null)
             {
-                scale1 = (float)viewH / _spreadDisplay1.Height;
+                scale1 = Math.Min(1.0f, (float)viewH / _spreadDisplay1.Height);
                 drawW1 = (int)(_spreadDisplay1.Width * scale1);
-                drawH1 = viewH;
+                drawH1 = (int)(_spreadDisplay1.Height * scale1);
             }
             if (_spreadDisplay2 != null)
             {
-                scale2 = (float)viewH / _spreadDisplay2.Height;
+                scale2 = Math.Min(1.0f, (float)viewH / _spreadDisplay2.Height);
                 drawW2 = (int)(_spreadDisplay2.Width * scale2);
-                drawH2 = viewH;
+                drawH2 = (int)(_spreadDisplay2.Height * scale2);
             }
 
             int totalW = drawW1 + drawW2;
@@ -454,45 +446,36 @@ namespace leeyez_kai.Controls
         }
 
         /// <summary>
-        /// Win32 StretchDIBitsで最速描画
+        /// Win32 StretchDIBitsで最速描画（SKBitmapから直接）
         /// </summary>
-        private void BlitBitmap(Graphics g, Bitmap bmp, RectangleF destRect)
+        private void BlitBitmap(Graphics g, SKBitmap skBmp, RectangleF destRect)
         {
-            var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height),
-                ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
+            var bmi = new BITMAPINFO
+            {
+                bmiHeader = new BITMAPINFOHEADER
+                {
+                    biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
+                    biWidth = skBmp.Width,
+                    biHeight = -skBmp.Height, // top-down
+                    biPlanes = 1,
+                    biBitCount = 32,
+                    biCompression = 0,
+                    biSizeImage = (uint)(skBmp.RowBytes * skBmp.Height)
+                }
+            };
+
+            IntPtr hdc = g.GetHdc();
             try
             {
-                var bmi = new BITMAPINFO
-                {
-                    bmiHeader = new BITMAPINFOHEADER
-                    {
-                        biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
-                        biWidth = bmp.Width,
-                        biHeight = -bmp.Height, // top-down
-                        biPlanes = 1,
-                        biBitCount = 32,
-                        biCompression = 0, // BI_RGB
-                        biSizeImage = (uint)(data.Stride * bmp.Height)
-                    }
-                };
-
-                IntPtr hdc = g.GetHdc();
-                try
-                {
-                    SetStretchBltMode(hdc, HALFTONE);
-                    StretchDIBits(hdc,
-                        (int)destRect.X, (int)destRect.Y, (int)destRect.Width, (int)destRect.Height,
-                        0, 0, bmp.Width, bmp.Height,
-                        data.Scan0, ref bmi, DIB_RGB_COLORS, SRCCOPY);
-                }
-                finally
-                {
-                    g.ReleaseHdc(hdc);
-                }
+                SetStretchBltMode(hdc, HALFTONE);
+                StretchDIBits(hdc,
+                    (int)destRect.X, (int)destRect.Y, (int)destRect.Width, (int)destRect.Height,
+                    0, 0, skBmp.Width, skBmp.Height,
+                    skBmp.GetPixels(), ref bmi, DIB_RGB_COLORS, SRCCOPY);
             }
             finally
             {
-                bmp.UnlockBits(data);
+                g.ReleaseHdc(hdc);
             }
         }
 
@@ -503,9 +486,9 @@ namespace leeyez_kai.Controls
         {
             float scale = _scaleMode switch
             {
-                ScaleMode.FitWindow => Math.Min((float)area.Width / imgW, (float)area.Height / imgH),
-                ScaleMode.FitWidth => (float)area.Width / imgW,
-                ScaleMode.FitHeight => (float)area.Height / imgH,
+                ScaleMode.FitWindow => Math.Min(1.0f, Math.Min((float)area.Width / imgW, (float)area.Height / imgH)),
+                ScaleMode.FitWidth => Math.Min(1.0f, (float)area.Width / imgW),
+                ScaleMode.FitHeight => Math.Min(1.0f, (float)area.Height / imgH),
                 ScaleMode.Original => 1.0f,
                 _ => 1.0f
             };
@@ -567,6 +550,11 @@ namespace leeyez_kai.Controls
                 // ドラッグ距離が閾値を超えたらパン開始
                 if (!_panStarted && (Math.Abs(dx) > 5 || Math.Abs(dy) > 5))
                 {
+                    if (!IsImageOverflowing())
+                    {
+                        _isPanning = false;
+                        return;
+                    }
                     _panStarted = true;
                     Cursor = Cursors.SizeAll;
                 }
@@ -577,6 +565,14 @@ namespace leeyez_kai.Controls
                     Invalidate();
                 }
             }
+        }
+
+        private bool IsImageOverflowing()
+        {
+            if (_isSpreadMode) return true;
+            if (_displayBitmap == null) return false;
+            var (rect, _) = CalcDrawRect(_displayBitmap.Width, _displayBitmap.Height);
+            return rect.Width > Width || rect.Height > Height;
         }
 
         #endregion

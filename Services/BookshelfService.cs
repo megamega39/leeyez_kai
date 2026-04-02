@@ -9,9 +9,7 @@ namespace leeyez_kai.Services
 {
     public class BookshelfService
     {
-        private static readonly string FilePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "leeyez", "bookshelf.json");
+        private static readonly string FilePath = AppPaths.GetPath("bookshelf.json");
 
         private BookshelfData _data = new();
 
@@ -43,7 +41,7 @@ namespace leeyez_kai.Services
                 var json = JsonSerializer.Serialize(_data, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(FilePath, json);
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to save bookshelf data: {ex.Message}"); }
         }
 
         public BookshelfCategory AddCategory(string name)

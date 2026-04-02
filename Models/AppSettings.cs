@@ -15,10 +15,9 @@ namespace leeyez_kai.Models
         public int ThumbnailSize { get; set; } = 128;
         public int HoverPreviewSize { get; set; } = 320;
         public int SidebarFontSize { get; set; } = 9;
+        public string Language { get; set; } = "ja";
 
-        private static readonly string FilePath = Path.Combine(
-            System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
-            "leeyez", "settings.json");
+        private static readonly string FilePath = AppPaths.GetPath("settings.json");
 
         public static AppSettings Load()
         {
@@ -27,7 +26,7 @@ namespace leeyez_kai.Models
                 if (File.Exists(FilePath))
                     return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new();
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to load settings: {ex.Message}"); }
             return new();
         }
 
@@ -39,7 +38,7 @@ namespace leeyez_kai.Models
                 if (dir != null && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to save settings: {ex.Message}"); }
         }
     }
 }

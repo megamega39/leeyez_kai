@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using SkiaSharp;
 using leeyez_kai.Controls;
 using leeyez_kai.Models;
 using leeyez_kai.Services;
@@ -17,7 +18,7 @@ namespace leeyez_kai
         {
             if (_fileListManager == null) return;
             _viewableFiles = _fileListManager.Items
-                .Where(f => !f.IsDirectory && FileExtensions.IsViewable(FileExtensions.GetExt(f.Name)))
+                .Where(f => !f.IsDirectory && f.IsViewable)
                 .ToList();
             _currentFileIndex = -1;
             UpdatePageLabel();
@@ -31,19 +32,18 @@ namespace leeyez_kai
         private void OnFileSelected(FileItem item)
         {
             if (item.IsDirectory) return;
-            var ext = FileExtensions.GetExt(item.Name);
 
-            if (FileExtensions.IsImage(ext))
+            if (item.IsImage)
             {
                 _currentFileIndex = _viewableFiles.FindIndex(f => f.FullPath == item.FullPath);
                 ShowCurrentFile();
             }
-            else if (FileExtensions.IsMedia(ext))
+            else if (item.IsMedia)
             {
                 _currentFileIndex = _viewableFiles.FindIndex(f => f.FullPath == item.FullPath);
                 ShowMedia(item);
             }
-            else if (item.IsArchiveFile || FileExtensions.IsArchive(ext))
+            else if (item.IsArchiveFile || item.IsArchiveExt)
             {
                 // デバウンス: 高速クリック時は最後の書庫だけ開く
                 _pendingArchivePath = item.FullPath;
@@ -76,6 +76,7 @@ namespace leeyez_kai
 
             if (index < 0) index = _viewableFiles.Count - 1;
             if (index >= _viewableFiles.Count) index = 0;
+            if (_currentFileIndex >= 0) _navDirection = index > _currentFileIndex ? 1 : -1;
             _currentFileIndex = index;
             UpdatePageLabel();
             AutoSaveState();
@@ -84,8 +85,7 @@ namespace leeyez_kai
             SyncFileListSelection(index);
 
             var item = _viewableFiles[index];
-            var ext = FileExtensions.GetExt(item.Name);
-            if (FileExtensions.IsMedia(ext)) { ShowMedia(item); return; }
+            if (item.IsMedia) { ShowMedia(item); return; }
 
             // キャッシュヒット → ShowCurrentFileで見開き判定を含めて表示
             if (_imageCache.Contains(item.FullPath))
@@ -138,10 +138,9 @@ namespace leeyez_kai
 
             // 非同期デコード: UIスレッドをブロックしない
             var file = _viewableFiles[_currentFileIndex];
-            var ext = FileExtensions.GetExt(file.Name);
 
             // GIF/WebPはアニメーション判定が必要なのでUIスレッドで
-            if (ext == ".gif" || ext == ".webp")
+            if (file.Ext == ".gif" || file.Ext == ".webp")
             {
                 ShowCurrentFile();
                 return;
@@ -171,22 +170,23 @@ namespace leeyez_kai
                         using var stream = GetFileStream(file);
                         if (stream != null)
                         {
-                            var bmp = ImageViewer.FastDecode(stream, ext, maxW, maxH, out int ow, out int oh);
-                            if (bmp != null) _imageCache.Put(file.FullPath, bmp, ow, oh);
+                            var bmp = ImageViewer.FastDecode(stream, file.Ext, maxW, maxH, out int ow, out int oh);
+                            if (bmp != null && !_imageCache.Put(file.FullPath, bmp, ow, oh))
+                                bmp.Dispose();
                         }
                     }
 
                     // 2枚目デコード（見開き時）
                     if (file2 != null && !_imageCache.Contains(file2.FullPath))
                     {
-                        var ext2 = FileExtensions.GetExt(file2.Name);
-                        if (ext2 != ".gif")
+                        if (file2.Ext != ".gif")
                         {
                             using var stream2 = GetFileStream(file2);
                             if (stream2 != null)
                             {
-                                var bmp2 = ImageViewer.FastDecode(stream2, ext2, maxW, maxH, out int ow2, out int oh2);
-                                if (bmp2 != null) _imageCache.Put(file2.FullPath, bmp2, ow2, oh2);
+                                var bmp2 = ImageViewer.FastDecode(stream2, file2.Ext, maxW, maxH, out int ow2, out int oh2);
+                                if (bmp2 != null && !_imageCache.Put(file2.FullPath, bmp2, ow2, oh2))
+                                    bmp2.Dispose();
                             }
                         }
                     }
@@ -207,11 +207,10 @@ namespace leeyez_kai
             {
                 if (_currentFileIndex < 0 || _currentFileIndex >= _viewableFiles.Count) return;
                 var file = _viewableFiles[_currentFileIndex];
-                var ext = FileExtensions.GetExt(file.Name);
 
                 UpdatePageLabel();
 
-                if (FileExtensions.IsMedia(ext)) { ShowMedia(file); return; }
+                if (file.IsMedia) { ShowMedia(file); return; }
 
                 _mediaPlayer.Stop();
                 _mediaPlayer.Visible = false;
@@ -232,8 +231,7 @@ namespace leeyez_kai
                 {
                     int nextIdx = _currentFileIndex + 1;
                     var file2 = _viewableFiles[nextIdx];
-                    LoadAndCacheImage(file);
-                    LoadAndCacheImage(file2);
+                    Parallel.Invoke(() => LoadAndCacheImage(file), () => LoadAndCacheImage(file2));
                     var bmp1 = _imageCache.Get(file.FullPath);
                     var bmp2 = _imageCache.Get(file2.FullPath);
                     if (bmp1 != null || bmp2 != null)
@@ -265,18 +263,17 @@ namespace leeyez_kai
                 if (stream != null)
                 {
                     var (maxW, maxH) = GetMaxDecodeSize();
-                    var ext = FileExtensions.GetExt(file.Name);
-                    var bmp = ImageViewer.FastDecode(stream, ext, maxW, maxH, out int ow, out int oh);
-                    if (bmp != null) _imageCache.Put(file.FullPath, bmp, ow, oh);
+                    var bmp = ImageViewer.FastDecode(stream, file.Ext, maxW, maxH, out int ow, out int oh);
+                    if (bmp != null && !_imageCache.Put(file.FullPath, bmp, ow, oh))
+                        bmp.Dispose();
                 }
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to load and cache image: {ex.Message}"); }
         }
 
         private void LoadAndShowImage(FileItem file, bool synchronous = false)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var ext = FileExtensions.GetExt(file.Name);
 
             // キャッシュヒットなら即表示（全形式共通）
             var cached = _imageCache.Get(file.FullPath);
@@ -297,12 +294,12 @@ namespace leeyez_kai
                 if (stream == null) return;
 
                 // GIFのみアニメーション判定（WebPは静止画として処理→軽量化）
-                if (ext == ".gif")
+                if (file.Ext == ".gif")
                 {
                     var (maxW, maxH) = GetMaxDecodeSize();
-                    var bmp = _imageViewer.LoadFromStream(stream, ext, maxW, maxH, out int ow, out int oh);
-                    if (bmp != null)
-                        _imageCache.Put(file.FullPath, bmp, ow, oh);
+                    var bmp = _imageViewer.LoadFromStream(stream, file.Ext, maxW, maxH, out int ow, out int oh);
+                    if (bmp != null && !_imageCache.Put(file.FullPath, bmp, ow, oh))
+                        bmp.Dispose();
                     _statusLeft.Text = file.FullPath;
                     Logger.Log($"[PERF] GIF: stream={streamMs}ms total={sw.ElapsedMilliseconds}ms {ow}x{oh} {file.Name}");
                     return;
@@ -313,13 +310,18 @@ namespace leeyez_kai
                 {
                     var (maxW, maxH) = GetMaxDecodeSize();
                     var swDecode = System.Diagnostics.Stopwatch.StartNew();
-                    var gdiBmp = ImageViewer.FastDecode(stream, ext, maxW, maxH, out int origW, out int origH);
+                    var skBmp = ImageViewer.FastDecode(stream, file.Ext, maxW, maxH, out int origW, out int origH);
                     var decodeMs = swDecode.ElapsedMilliseconds;
 
-                    if (gdiBmp != null)
+                    if (skBmp != null)
                     {
-                        _imageCache.Put(file.FullPath, gdiBmp, origW, origH);
-                        _imageViewer.ShowBitmap(gdiBmp, origW, origH);
+                        if (!_imageCache.Put(file.FullPath, skBmp, origW, origH))
+                        {
+                            skBmp.Dispose();
+                            skBmp = _imageCache.Get(file.FullPath)!;
+                            (origW, origH) = _imageCache.GetOriginalSize(file.FullPath);
+                        }
+                        _imageViewer.ShowBitmap(skBmp, origW, origH);
                         _statusLeft.Text = file.FullPath;
                     }
                     else
@@ -339,32 +341,55 @@ namespace leeyez_kai
         private void StartPrefetch()
         {
             _prefetchCts?.Cancel();
+            _prefetchCts?.Dispose();
             _prefetchCts = new CancellationTokenSource();
             var ct = _prefetchCts.Token;
             var currentIdx = _currentFileIndex;
+            var currentArchive = _currentArchivePath;
             var (maxW, maxH) = GetMaxDecodeSize();
 
             Task.Run(() =>
             {
                 try
                 {
-                    // プリフェッチ対象を収集（近い順）
+                    // プリフェッチ対象を収集（ナビゲーション方向を優先）
                     var targets = new List<(int idx, FileItem file)>();
-                    for (int offset = 1; offset <= AppConstants.PrefetchCount; offset++)
+                    int dir = _navDirection; // 1=前方向, -1=後ろ方向
+                    int majorCount = AppConstants.PrefetchCount * 3 / 4; // 75% 進行方向
+                    int minorCount = AppConstants.PrefetchCount - majorCount; // 25% 逆方向
+
+                    // 進行方向を先に（dir=1なら+i、dir=-1なら-i）
+                    for (int i = 1; i <= majorCount; i++)
                     {
-                        foreach (var idx in new[] { currentIdx + offset, currentIdx - offset })
+                        int idx = currentIdx + i * dir;
+                        if (idx >= 0 && idx < _viewableFiles.Count)
                         {
-                            if (idx < 0 || idx >= _viewableFiles.Count) continue;
                             var f = _viewableFiles[idx];
-                            if (_imageCache.Contains(f.FullPath)) continue;
-                            var ext = FileExtensions.GetExt(f.Name);
-                            if (!FileExtensions.IsImage(ext) || ext == ".gif") continue;
-                            if (ext == ".webp" && f.Size > 5 * 1024 * 1024) continue;
-                            targets.Add((idx, f));
+                            if (!_imageCache.Contains(f.FullPath) && f.IsImage && f.Ext != ".gif"
+                                && !(f.Ext == ".webp" && f.Size > 5 * 1024 * 1024))
+                                targets.Add((idx, f));
+                        }
+                    }
+                    // 逆方向（dir=1なら-i、dir=-1なら+i）
+                    for (int i = 1; i <= minorCount; i++)
+                    {
+                        int idx = currentIdx + i * (-dir);
+                        if (idx >= 0 && idx < _viewableFiles.Count)
+                        {
+                            var f = _viewableFiles[idx];
+                            if (!_imageCache.Contains(f.FullPath) && f.IsImage && f.Ext != ".gif"
+                                && !(f.Ext == ".webp" && f.Size > 5 * 1024 * 1024))
+                                targets.Add((idx, f));
                         }
                     }
 
                     if (targets.Count == 0) return;
+
+                    // 書庫モード: 一括展開でStreamキャッシュに先行投入
+                    if (currentArchive != null && !ct.IsCancellationRequested)
+                        BulkExtractForPrefetch(targets, ct, currentArchive);
+
+                    if (ct.IsCancellationRequested) return;
 
                     // 4並列でデコード（マルチコア活用）
                     Parallel.ForEach(targets, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, target =>
@@ -372,22 +397,70 @@ namespace leeyez_kai
                         if (ct.IsCancellationRequested) return;
                         try
                         {
-                            var ext = FileExtensions.GetExt(target.file.Name);
                             using var stream = GetFileStream(target.file);
                             if (stream != null)
                             {
-                                var bmp = ImageViewer.FastDecode(stream, ext, maxW, maxH, out int ow, out int oh);
-                                if (bmp != null && !ct.IsCancellationRequested)
-                                    _imageCache.Put(target.file.FullPath, bmp, ow, oh);
-                                else
-                                    bmp?.Dispose();
+                                var bmp = ImageViewer.FastDecode(stream, target.file.Ext, maxW, maxH, out int ow, out int oh);
+                                if (bmp != null)
+                                {
+                                    if (ct.IsCancellationRequested || !_imageCache.Put(target.file.FullPath, bmp, ow, oh))
+                                        bmp.Dispose();
+                                }
                             }
                         }
-                        catch { }
+                        catch (Exception ex) { Logger.Log($"Failed to prefetch image: {ex.Message}"); }
                     });
                 }
-                catch { }
+                catch (Exception ex) { Logger.Log($"Failed to start prefetch task: {ex.Message}"); }
             }, ct);
+        }
+
+        /// <summary>書庫モード時、プリフェッチ対象を一括展開してStreamキャッシュに投入</summary>
+        private void BulkExtractForPrefetch(List<(int idx, FileItem file)> targets, CancellationToken ct, string archivePath)
+        {
+            var prefix = archivePath + "!";
+
+            var entryKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (_, file) in targets)
+            {
+                if (ct.IsCancellationRequested) return;
+                lock (_streamCacheLock)
+                {
+                    if (_archiveStreamCache.ContainsKey(file.FullPath)) continue;
+                }
+                if (file.FullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    entryKeys.Add(file.FullPath.Substring(prefix.Length));
+            }
+
+            if (entryKeys.Count == 0) return;
+            if (ct.IsCancellationRequested || _currentArchivePath != archivePath) return;
+
+            var extracted = ArchiveService.ExtractAll(archivePath, _sevenZipLibPath, entryKeys, ct);
+            foreach (var (entryKey, bytes) in extracted)
+            {
+                if (ct.IsCancellationRequested || _currentArchivePath != archivePath) return;
+                var fullPath = prefix + entryKey;
+                if (bytes.Length >= 2 * 1024 * 1024) continue;
+
+                lock (_streamCacheLock)
+                {
+                    if (_archiveStreamCache.ContainsKey(fullPath)) continue;
+
+                    // LRU逐出
+                    while (_archiveStreamCacheBytes + bytes.Length > MaxArchiveStreamCacheBytes
+                           && _archiveStreamCacheOrder.Last != null)
+                    {
+                        var oldest = _archiveStreamCacheOrder.Last.Value;
+                        _archiveStreamCacheOrder.RemoveLast();
+                        if (_archiveStreamCache.Remove(oldest, out var oldBytes))
+                            _archiveStreamCacheBytes -= oldBytes.Length;
+                    }
+
+                    _archiveStreamCache[fullPath] = bytes;
+                    _archiveStreamCacheOrder.AddFirst(fullPath);
+                    _archiveStreamCacheBytes += bytes.Length;
+                }
+            }
         }
 
         /// <summary>画像が縦向き（ポートレート）かどうか</summary>
@@ -413,9 +486,8 @@ namespace leeyez_kai
             if (_viewableFiles.Count <= 1) return false;
 
             var file = _viewableFiles[index];
-            var ext = FileExtensions.GetExt(file.Name);
 
-            if (FileExtensions.IsMedia(ext)) return false;
+            if (file.IsMedia) return false;
 
             // 最初のページは単独（表紙）— 設定で制御
             if (index == 0 && _appSettings.AutoSpreadCover) return false;
@@ -431,9 +503,8 @@ namespace leeyez_kai
             if (nextIdx >= _viewableFiles.Count) return false;
 
             var nextFile = _viewableFiles[nextIdx];
-            var nextExt = FileExtensions.GetExt(nextFile.Name);
 
-            if (FileExtensions.IsMedia(nextExt)) return false;
+            if (nextFile.IsMedia) return false;
 
             var (w2, h2) = _imageCache.GetOriginalSize(nextFile.FullPath);
             bool nextPortrait = (w2 <= 0 || h2 <= 0) ? true : ((float)w2 / h2 <= _appSettings.SpreadThreshold);
@@ -477,10 +548,9 @@ namespace leeyez_kai
                         var stream = GetFileStream(fileCopy);
                         if (stream == null) { BeginInvoke(() => _statusLeft.Text = "展開に失敗しました"); return; }
 
-                        var ext = FileExtensions.GetExt(fileCopy.Name);
                         var tempDir = Path.Combine(Path.GetTempPath(), "leeyez_media");
                         Directory.CreateDirectory(tempDir);
-                        var tempFile = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + ext);
+                        var tempFile = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + fileCopy.Ext);
 
                         using (var fs = new FileStream(tempFile, FileMode.Create))
                             stream.CopyTo(fs);
@@ -584,7 +654,7 @@ namespace leeyez_kai
         private void SetupHoverPreview()
         {
             _hoverPreview = new HoverPreviewForm();
-            _hoverPreviewEnabled = true; // デフォルト有効
+            _hoverPreviewEnabled = false; // デフォルト無効
             _hoverTimer = new System.Windows.Forms.Timer { Interval = 200 };
             _hoverTimer.Tick += HoverTimer_Tick;
 
@@ -594,7 +664,7 @@ namespace leeyez_kai
             _folderTree.MouseMove += FolderTree_MouseMovePreview;
             _folderTree.MouseLeave += (s, e) => HideHoverPreview();
 
-            _btnHoverPreview.Checked = true;
+            _btnHoverPreview.Checked = false;
             _btnHoverPreview.Click += (s, e) =>
             {
                 _hoverPreviewEnabled = !_hoverPreviewEnabled;
@@ -610,8 +680,7 @@ namespace leeyez_kai
             if (hit.Item?.Tag is FileItem fi)
             {
                 if (fi.IsDirectory) { HideHoverPreview(); return; }
-                var ext = FileExtensions.GetExt(fi.Name);
-                if (FileExtensions.IsImage(ext) || FileExtensions.IsArchive(ext))
+                if (fi.IsImage || fi.IsArchiveExt)
                 {
                     if (_hoverItem?.FullPath != fi.FullPath)
                     {
@@ -665,8 +734,7 @@ namespace leeyez_kai
             }
 
             // 書庫の場合は最初の画像をプレビュー
-            var ext = FileExtensions.GetExt(item.Name);
-            if (FileExtensions.IsArchive(ext))
+            if (item.IsArchiveExt)
             {
                 Task.Run(() =>
                 {
@@ -677,11 +745,10 @@ namespace leeyez_kai
                             !en.IsFolder && FileExtensions.IsImage(FileExtensions.GetExt(en.FileName)));
                         if (firstImage == null) return;
 
-                        var stream = ArchiveService.GetEntryStream(item.FullPath, firstImage.FileName, _sevenZipLibPath);
+                        using var stream = ArchiveService.GetEntryStream(item.FullPath, firstImage.FileName, _sevenZipLibPath);
                         if (stream == null) return;
                         var imgExt = FileExtensions.GetExt(firstImage.FileName);
                         var bmp = ImageViewer.FastDecode(stream, imgExt, 320, 320, out _, out _);
-                        stream.Dispose();
                         if (bmp == null) return;
 
                         _fileList.BeginInvoke(() =>
@@ -690,7 +757,7 @@ namespace leeyez_kai
                             _hoverPreview?.ShowPreview(bmp, Cursor.Position);
                         });
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Log($"Failed to load hover preview for archive: {ex.Message}"); }
                 });
                 return;
             }
@@ -702,7 +769,7 @@ namespace leeyez_kai
                 {
                     using var stream = GetFileStream(item);
                     if (stream == null) return;
-                    var bmp = ImageViewer.FastDecode(stream, ext, 320, 320, out _, out _);
+                    var bmp = ImageViewer.FastDecode(stream, item.Ext, 320, 320, out _, out _);
                     if (bmp == null) return;
 
                     _fileList.BeginInvoke(() =>
@@ -711,7 +778,7 @@ namespace leeyez_kai
                         _hoverPreview?.ShowPreview(bmp, Cursor.Position);
                     });
                 }
-                catch { }
+                catch (Exception ex) { Logger.Log($"Failed to load hover preview: {ex.Message}"); }
             });
         }
 

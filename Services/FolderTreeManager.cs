@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace leeyez_kai.Services
@@ -12,12 +13,24 @@ namespace leeyez_kai.Services
     /// </summary>
     public class FolderTreeManager
     {
+        [DllImport("user32.dll")]
+        private static extern int GetScrollPos(IntPtr hWnd, int nBar);
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern int SetScrollPos(IntPtr hWnd, int nBar, int nPos, bool bRedraw);
+        private const int SB_HORZ = 0;
+        private const uint WM_HSCROLL = 0x0114;
+        private const int SB_THUMBPOSITION = 4;
+
         private readonly TreeView _treeView;
         private readonly ImageList _imageList;
         private bool _suppressSelect;
+        public bool SuppressSelect { get => _suppressSelect; set => _suppressSelect = value; }
         private readonly HashSet<string> _registeredIconKeys = new();
 
         public event Action<string>? FolderSelected;
+        public event Action<List<string>>? FavoritesChanged;
 
         // 特殊フォルダ定義
         private static readonly (string Name, Environment.SpecialFolder Folder)[] KnownFolders = new[]
@@ -36,6 +49,9 @@ namespace leeyez_kai.Services
             _imageList = new ImageList { ImageSize = new Size(16, 16), ColorDepth = ColorDepth.Depth32Bit };
 
             _treeView.ImageList = _imageList;
+            // TreeViewのDoubleBufferedはprotectedなのでリフレクションで設定
+            typeof(Control).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(_treeView, true);
             _treeView.HideSelection = false;
             _treeView.ShowLines = true;
             _treeView.ShowPlusMinus = true;
@@ -292,11 +308,22 @@ namespace leeyez_kai.Services
                     _suppressSelect = true;
                     try
                     {
+                        // お気に入り配下で選択中ならお気に入り内を優先検索
+                        var currentNode = _treeView.SelectedNode;
+                        if (currentNode != null && IsUnderFavorites(currentNode))
+                        {
+                            var favArchiveNode = FindArchiveNodeInFavorites(path);
+                            if (favArchiveNode != null)
+                            {
+                                SelectAndReveal(favArchiveNode);
+                                return;
+                            }
+                        }
+
                         var archiveNode = FindArchiveNode(folderPath, archiveFileName);
                         if (archiveNode != null)
                         {
-                            _treeView.SelectedNode = archiveNode;
-                            archiveNode.EnsureVisible();
+                            SelectAndReveal(archiveNode);
                             return;
                         }
                     }
@@ -326,8 +353,7 @@ namespace leeyez_kai.Services
                             var tag = child.Tag?.ToString();
                             if (tag != null && folderPath.Equals(tag, StringComparison.OrdinalIgnoreCase))
                             {
-                                _treeView.SelectedNode = child;
-                                child.EnsureVisible();
+                                SelectAndReveal(child);
                                 return;
                             }
                             if (tag != null && folderPath.StartsWith(tag + "\\", StringComparison.OrdinalIgnoreCase))
@@ -336,8 +362,7 @@ namespace leeyez_kai.Services
                                 var result = DrillDown(child, relative);
                                 if (result != null)
                                 {
-                                    _treeView.SelectedNode = result;
-                                    result.EnsureVisible();
+                                    SelectAndReveal(result);
                                     return;
                                 }
                             }
@@ -352,8 +377,7 @@ namespace leeyez_kai.Services
                     if (tag != null && !tag.StartsWith("FAVOR") && tag != "PC"
                         && folderPath.Equals(tag, StringComparison.OrdinalIgnoreCase))
                     {
-                        _treeView.SelectedNode = rootNode;
-                        rootNode.EnsureVisible();
+                        SelectAndReveal(rootNode);
                         return;
                     }
                 }
@@ -370,8 +394,7 @@ namespace leeyez_kai.Services
                         var result = DrillDown(rootNode, relative);
                         if (result != null)
                         {
-                            _treeView.SelectedNode = result;
-                            result.EnsureVisible();
+                            SelectAndReveal(result);
                             return;
                         }
                     }
@@ -400,10 +423,7 @@ namespace leeyez_kai.Services
                 string remainingPath = string.Join("\\", parts.Skip(1));
                 var target = DrillDown(driveNode, remainingPath);
                 if (target != null)
-                {
-                    _treeView.SelectedNode = target;
-                    target.EnsureVisible();
-                }
+                    SelectAndReveal(target);
             }
             finally
             {
@@ -477,6 +497,81 @@ namespace leeyez_kai.Services
                 if (child.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
                     return child;
             }
+
+            // 見つからない場合、親ノードの子を再列挙して再検索
+            // （アプリ起動後にダウンロードされたファイル等、展開後に追加されたファイル対応）
+            RefreshNode(parentNode);
+            foreach (TreeNode child in parentNode.Nodes)
+            {
+                if (child.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                    return child;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// お気に入り配下から書庫ファイルノードを探す
+        /// （書庫ファイルが直接お気に入りに登録されている場合、またはお気に入りフォルダ配下にある場合）
+        /// </summary>
+        private TreeNode? FindArchiveNodeInFavorites(string archivePath)
+        {
+            var favNode = FindNodeByTag("FAVORITES");
+            if (favNode == null) return null;
+
+            var archiveFileName = Path.GetFileName(archivePath);
+            var parentFolder = Path.GetDirectoryName(archivePath);
+
+            foreach (TreeNode child in favNode.Nodes)
+            {
+                var tag = child.Tag?.ToString();
+                if (tag == null) continue;
+
+                // 書庫ファイルが直接お気に入りに登録されている場合
+                if (tag.Equals(archivePath, StringComparison.OrdinalIgnoreCase))
+                    return child;
+
+                // お気に入りフォルダ配下に書庫がある場合
+                if (parentFolder != null && Directory.Exists(tag)
+                    && parentFolder.Equals(tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    ExpandNode(child);
+                    foreach (TreeNode grandChild in child.Nodes)
+                    {
+                        if (grandChild.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                            return grandChild;
+                    }
+                    // 見つからなければ再列挙
+                    RefreshNode(child);
+                    foreach (TreeNode grandChild in child.Nodes)
+                    {
+                        if (grandChild.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                            return grandChild;
+                    }
+                }
+
+                // お気に入りフォルダのさらに下の階層にある場合
+                if (parentFolder != null && Directory.Exists(tag)
+                    && parentFolder.StartsWith(tag + "\\", StringComparison.OrdinalIgnoreCase))
+                {
+                    string relative = parentFolder.Substring(tag.Length).TrimStart('\\', '/');
+                    var parentNode = DrillDown(child, relative);
+                    if (parentNode != null)
+                    {
+                        ExpandNode(parentNode);
+                        foreach (TreeNode grandChild in parentNode.Nodes)
+                        {
+                            if (grandChild.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                                return grandChild;
+                        }
+                        RefreshNode(parentNode);
+                        foreach (TreeNode grandChild in parentNode.Nodes)
+                        {
+                            if (grandChild.Text.Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
+                                return grandChild;
+                        }
+                    }
+                }
+            }
             return null;
         }
 
@@ -530,6 +625,33 @@ namespace leeyez_kai.Services
         {
             if (e.Node == null) return;
             ExpandNode(e.Node);
+        }
+
+        private const uint WM_SETREDRAW = 0x000B;
+
+        [DllImport("user32.dll")]
+        private static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
+
+        public void SelectAndReveal(TreeNode node)
+        {
+            int hPos = GetScrollPos(_treeView.Handle, SB_HORZ);
+            // 描画を一時停止して全操作をバッチ化
+            SendMessage(_treeView.Handle, WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+            try
+            {
+                if (_treeView.SelectedNode != node)
+                    _treeView.SelectedNode = node;
+                node.EnsureVisible();
+                // 水平スクロール位置を復元（上下移動のみにする）
+                SendMessage(_treeView.Handle, WM_HSCROLL,
+                    (IntPtr)(SB_THUMBPOSITION | (hPos << 16)), IntPtr.Zero);
+            }
+            finally
+            {
+                SendMessage(_treeView.Handle, WM_SETREDRAW, (IntPtr)1, IntPtr.Zero);
+                // 非同期で1回だけ再描画（Refresh()は同期で中間状態が見えるため使わない）
+                InvalidateRect(_treeView.Handle, IntPtr.Zero, true);
+            }
         }
 
         private void ExpandNode(TreeNode node)
@@ -738,9 +860,7 @@ namespace leeyez_kai.Services
                     favorites.Add(tag);
             }
 
-            var state = PersistenceService.LoadState() ?? new Models.AppState();
-            state.Favorites = favorites;
-            PersistenceService.SaveState(state);
+            FavoritesChanged?.Invoke(favorites);
         }
 
         /// <summary>ツリーノードを更新（子ノード再読み込み）</summary>

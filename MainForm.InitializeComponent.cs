@@ -1,7 +1,9 @@
 using System.Drawing;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using leeyez_kai.Controls;
+using leeyez_kai.i18n;
 
 namespace leeyez_kai
 {
@@ -12,6 +14,8 @@ namespace leeyez_kai
             SuspendLayout();
 
             Text = "Leeyez Kai";
+            var icoPath = Path.Combine(AppContext.BaseDirectory, "icon.ico");
+            if (File.Exists(icoPath)) try { Icon = new Icon(icoPath); } catch { }
             Size = new Size(1200, 800);
             MinimumSize = new Size(600, 400);
             StartPosition = FormStartPosition.CenterScreen;
@@ -36,31 +40,32 @@ namespace leeyez_kai
 
             _btnBack = new ToolStripSplitButton("\uE72B")
             {
-                ToolTipText = "戻る (Alt+←)", AutoSize = false, Size = new Size(56, 44),
+                ToolTipText = Localization.Get("nav.back"), AutoSize = false, Size = new Size(56, 44),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
                 Font = new Font(iconFont, 18f), ForeColor = Color.FromArgb(60, 60, 60),
                 Padding = new Padding(2), Margin = new Padding(1, 0, 1, 0)
             };
             _btnForward = new ToolStripSplitButton("\uE72A")
             {
-                ToolTipText = "進む (Alt+→)", AutoSize = false, Size = new Size(56, 44),
+                ToolTipText = Localization.Get("nav.forward"), AutoSize = false, Size = new Size(56, 44),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
                 Font = new Font(iconFont, 18f), ForeColor = Color.FromArgb(60, 60, 60),
                 Padding = new Padding(2), Margin = new Padding(1, 0, 1, 0)
             };
-            _btnUp = CreateNavButton("\uE74A", "上へ (Alt+↑)", iconFont, 18f);
-            _btnRefresh = CreateNavButton("\uE72C", "更新 (F5)", iconFont, 18f);
-            _btnHoverPreview = CreateNavButton("\uE7B3", "ホバープレビュー", iconFont, 18f);
-            _btnBookshelf = CreateNavButton("\uE82D", "本棚", iconFont, 18f);
-            _btnListView = CreateNavButton("\uE8FD", "リスト表示", iconFont, 18f);
-            _btnGridView = CreateNavButton("\uE80A", "グリッド表示", iconFont, 18f);
-            _btnSettings = CreateNavButton("\uE713", "設定", iconFont, 18f);
-            _btnHelp = CreateNavButton("\uE897", "ヘルプ (F1)", iconFont, 18f);
+            _btnUp = CreateNavButton("\uE74A", Localization.Get("nav.up"), iconFont, 18f);
+            _btnRefresh = CreateNavButton("\uE72C", Localization.Get("nav.refresh"), iconFont, 18f);
+            _btnHoverPreview = CreateNavButton("\uE7B3", Localization.Get("nav.hover"), iconFont, 18f);
+            _btnBookshelf = CreateNavButton("\uE82D", Localization.Get("nav.bookshelf"), iconFont, 18f);
+            _btnHistory = CreateNavButton("\uE81C", Localization.Get("history.label"), iconFont, 18f);
+            _btnListView = CreateNavButton("\uE8FD", Localization.Get("nav.list"), iconFont, 18f);
+            _btnGridView = CreateNavButton("\uE80A", Localization.Get("nav.grid"), iconFont, 18f);
+            _btnSettings = CreateNavButton("\uE713", Localization.Get("nav.settings"), iconFont, 18f);
+            _btnHelp = CreateNavButton("\uE897", Localization.Get("nav.help"), iconFont, 18f);
 
             _navBar.Items.AddRange(new ToolStripItem[] {
                 _btnBack, _btnForward, _btnUp, _btnRefresh,
                 new ToolStripSeparator(),
-                _btnHoverPreview, _btnBookshelf,
+                _btnHoverPreview, _btnBookshelf, _btnHistory,
                 new ToolStripSeparator(),
                 _btnListView, _btnGridView,
                 new ToolStripSeparator(),
@@ -78,7 +83,7 @@ namespace leeyez_kai
             _btnSettings.Click += (s, e) => ShowSettings();
             _btnHelp.Click += (s, e) => ShowHelp();
 
-            // ── アドレスバー ──
+            // ── アドレスバー（ブレッドクラム + テキスト編集切替） ──
             _addressBarPanel = new Panel
             {
                 Dock = DockStyle.Top, Height = 30,
@@ -86,22 +91,40 @@ namespace leeyez_kai
             };
             _addressLabel = new Label
             {
-                Text = "アドレス(A)", AutoSize = true, Location = new Point(6, 6),
-                ForeColor = Color.FromArgb(100, 100, 100), Font = new Font("Yu Gothic UI", 9f)
+                Text = Localization.Get("sidebar.address"), AutoSize = true, Dock = DockStyle.Left,
+                ForeColor = Color.FromArgb(100, 100, 100), Font = new Font("Yu Gothic UI", 9f),
+                Padding = new Padding(2, 4, 4, 0)
             };
             _addressBox = new TextBox
             {
-                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
-                Location = new Point(80, 3), Height = 24,
-                Font = new Font("Yu Gothic UI", 9f), BorderStyle = BorderStyle.FixedSingle
+                Dock = DockStyle.Fill,
+                Font = new Font("Yu Gothic UI", 9f), BorderStyle = BorderStyle.FixedSingle,
+                Visible = false
             };
             _addressBox.KeyDown += (s, e) =>
             {
-                if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; NavigateTo(_addressBox.Text); }
+                if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; NavigateTo(_addressBox.Text); ShowBreadcrumb(); }
+                if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; ShowBreadcrumb(); }
             };
-            _addressBarPanel.Controls.Add(_addressLabel);
+            _addressBox.LostFocus += (s, e) => ShowBreadcrumb();
+
+            _breadcrumbPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill, AutoSize = false,
+                WrapContents = false, BackColor = Color.White,
+                Font = new Font("Yu Gothic UI", 9f),
+                Padding = new Padding(0), Margin = new Padding(0)
+            };
+            _breadcrumbPanel.MouseDown += (s, e) =>
+            {
+                // リンクラベル上のクリックは無視（リンクのNavigateToと競合防止）
+                if (_breadcrumbPanel.GetChildAtPoint(e.Location) == null)
+                    ShowAddressEdit();
+            };
+
             _addressBarPanel.Controls.Add(_addressBox);
-            _addressBarPanel.Resize += (s, e) => { _addressBox.Width = _addressBarPanel.Width - 90; };
+            _addressBarPanel.Controls.Add(_breadcrumbPanel);
+            _addressBarPanel.Controls.Add(_addressLabel);
 
             // ── メインスプリッター ──
             _mainSplit = new SplitContainer
@@ -115,6 +138,32 @@ namespace leeyez_kai
             _folderTree = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Yu Gothic UI", 9f) };
             _bookshelfTree = new TreeView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Yu Gothic UI", 9f), Visible = false };
 
+            // 履歴ツールバー（履歴モード時に表示）
+            _historyToolbar = new Panel
+            {
+                Dock = DockStyle.Top, Height = 28, Visible = false,
+                BackColor = Color.FromArgb(0xF0, 0xF0, 0xF0), Padding = new Padding(2)
+            };
+            var histIcon = new Label { Text = "\uE81C", AutoSize = true, Location = new Point(4, 3), Font = new Font(iconFont, 10f) };
+            _historyLabel = new Label { Text = Localization.Get("history.label"), AutoSize = true, Location = new Point(30, 5), Font = new Font("Yu Gothic UI", 9f) };
+            _historyBtnClear = new Button { Text = Localization.Get("history.clear"), FlatStyle = FlatStyle.Flat, Size = new Size(52, 22), Location = new Point(72, 3), Font = new Font("Yu Gothic UI", 8f) };
+            _historyBtnClear.FlatAppearance.BorderSize = 1;
+            _historyBtnClear.Click += (s, e) => ClearAllHistory();
+            _historyFilterBox = new TextBox
+            {
+                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
+                Location = new Point(130, 3), Height = 22, Width = 120,
+                Font = new Font("Yu Gothic UI", 8.5f), BorderStyle = BorderStyle.FixedSingle
+            };
+            _historyFilterBox.TextChanged += (s, e) => { _historyFilter = _historyFilterBox.Text; BuildHistoryList(); };
+            _historyFilterBox.HandleCreated += (s, e) => SetPlaceholder(_historyFilterBox, Localization.Get("sidebar.filter"));
+            _historyToolbar.Resize += (s, e) => { _historyFilterBox.Width = _historyToolbar.Width - 155; };
+            _historyToolbar.Controls.AddRange(new Control[] { histIcon, _historyLabel, _historyBtnClear, _historyFilterBox });
+
+            _historyList = new ListView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Yu Gothic UI", 9f), Visible = false };
+
+            _btnHistory.Click += (s, e) => ToggleHistory();
+
             // 本棚ツールバー（本棚モード時に表示）
             _bookshelfToolbar = new Panel
             {
@@ -122,14 +171,15 @@ namespace leeyez_kai
                 BackColor = Color.FromArgb(0xF0, 0xF0, 0xF0), Padding = new Padding(2)
             };
             var bsIcon = new Label { Text = "📚", AutoSize = true, Location = new Point(4, 3), Font = new Font("Segoe UI", 10f) };
-            var bsLabel = new Label { Text = "本棚", AutoSize = true, Location = new Point(30, 5), Font = new Font("Yu Gothic UI", 9f) };
-            var bsBtnNew = new Button { Text = "新規", FlatStyle = FlatStyle.Flat, Size = new Size(44, 22), Location = new Point(72, 3), Font = new Font("Yu Gothic UI", 8f) };
+            var bsLabel = new Label { Text = Localization.Get("sidebar.bookshelf"), AutoSize = true, Location = new Point(30, 5), Font = new Font("Yu Gothic UI", 9f) };
+            var bsBtnNew = new Button { Text = Localization.Get("sidebar.new"), FlatStyle = FlatStyle.Flat, Size = new Size(44, 22), Location = new Point(72, 3), Font = new Font("Yu Gothic UI", 8f) };
             bsBtnNew.FlatAppearance.BorderSize = 1;
             bsBtnNew.Click += (s, e) => BookshelfNewCategory();
             _bookshelfToolbar.Controls.AddRange(new Control[] { bsIcon, bsLabel, bsBtnNew });
-            _filterPanel = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(4) };
+            _filterPanel = new Panel { Dock = DockStyle.Top, Height = 30, Padding = new Padding(4, 4, 20, 4) };
             _filterBox = new TextBox { Dock = DockStyle.Fill, Font = new Font("Yu Gothic UI", 9f), BorderStyle = BorderStyle.FixedSingle };
             _filterBox.TextChanged += (s, e) => _fileListManager?.SetFilter(_filterBox.Text);
+            _filterBox.HandleCreated += (s, e) => SetPlaceholder(_filterBox, Localization.Get("sidebar.filter"));
             _filterPanel.Controls.Add(_filterBox);
             _fileList = new ListView { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None };
             _virtualGrid = new VirtualGridPanel { Dock = DockStyle.Fill, Visible = false };
@@ -137,7 +187,7 @@ namespace leeyez_kai
             var folderLabel = new Panel { Dock = DockStyle.Top, Height = 24, BackColor = Color.FromArgb(0xF0, 0xF0, 0xF0) };
             _sidebarLabel = new Label
             {
-                Text = "フォルダ", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+                Text = Localization.Get("sidebar.folder"), Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(4, 0, 0, 0), Font = new Font("Yu Gothic UI", 9f)
             };
             folderLabel.Controls.Add(_sidebarLabel);
@@ -146,7 +196,9 @@ namespace leeyez_kai
             // Fill は最初に追加、Top は後に追加
             _sidebarSplit.Panel1.Controls.Add(_folderTree);      // Fill（通常時表示）
             _sidebarSplit.Panel1.Controls.Add(_bookshelfTree);   // Fill（本棚時表示）
+            _sidebarSplit.Panel1.Controls.Add(_historyList);     // Fill（履歴時表示）
             _sidebarSplit.Panel1.Controls.Add(_bookshelfToolbar); // Top（本棚時表示）
+            _sidebarSplit.Panel1.Controls.Add(_historyToolbar);  // Top（履歴時表示）
             _sidebarSplit.Panel1.Controls.Add(folderLabel);       // Top（常に表示）
             _sidebarSplit.Panel2.Controls.Add(_fileList);
             _sidebarSplit.Panel2.Controls.Add(_virtualGrid);
@@ -168,8 +220,8 @@ namespace leeyez_kai
             _btnNext = CreateViewerButton("\uE76C", "次 (→)", iconFont);
             _btnLast = CreateViewerButton("\uE893", "最後 (End)", iconFont);
             _btnFitWindow = CreateViewerButton("\uE740", "ウィンドウに合わせる (W)", iconFont);
-            _btnFitWidth = new ToolStripButton { ToolTipText = "幅に合わせる", AutoSize = false, Size = new Size(32, 28), DisplayStyle = ToolStripItemDisplayStyle.Image, Image = DrawFitIcon(true), Margin = new Padding(1, 2, 1, 2) };
-            _btnFitHeight = new ToolStripButton { ToolTipText = "高さに合わせる", AutoSize = false, Size = new Size(32, 28), DisplayStyle = ToolStripItemDisplayStyle.Image, Image = DrawFitIcon(false), Margin = new Padding(1, 2, 1, 2) };
+            _btnFitWidth = new ToolStripButton { ToolTipText = Localization.Get("viewer.fitwidth"), AutoSize = false, Size = new Size(32, 28), DisplayStyle = ToolStripItemDisplayStyle.Image, Image = DrawFitIcon(true), Margin = new Padding(1, 2, 1, 2) };
+            _btnFitHeight = new ToolStripButton { ToolTipText = Localization.Get("viewer.fitheight"), AutoSize = false, Size = new Size(32, 28), DisplayStyle = ToolStripItemDisplayStyle.Image, Image = DrawFitIcon(false), Margin = new Padding(1, 2, 1, 2) };
             _btnZoomIn = CreateViewerButton("\uE8A3", "拡大 (Ctrl++)", iconFont);
             _btnZoomOut = CreateViewerButton("\uE71F", "縮小 (Ctrl+-)", iconFont);
             _zoomLabel = new ToolStripLabel("100%")
@@ -180,7 +232,7 @@ namespace leeyez_kai
             _btnOriginal = CreateViewerButton("1:1", "原寸", "Yu Gothic UI", 11f);
             _btnBinding = new ToolStripButton("←")
             {
-                ToolTipText = "綴じ方向 (B)", AutoSize = false, Size = new Size(36, 30),
+                ToolTipText = Localization.Get("viewer.binding"), AutoSize = false, Size = new Size(36, 30),
                 DisplayStyle = ToolStripItemDisplayStyle.Text,
                 Font = new Font("Yu Gothic UI", 15f, FontStyle.Bold),
                 ForeColor = Color.FromArgb(60, 60, 60),
@@ -246,7 +298,7 @@ namespace leeyez_kai
                     var sizeLabel = _statusBar.Items["statusFileSize"];
                     if (dimLabel != null) dimLabel.Text = $"{w} × {h}";
                     if (sizeLabel != null) sizeLabel.Text = fi.SizeString;
-                    _statusRight.Text = "ウィンドウ合わせ";
+                    _statusRight.Text = Localization.Get("viewer.fitwindow");
                 }
             };
             _imageViewer.WheelNavigate += (delta) => GoToFile(_currentFileIndex + delta * GetPagesPerView());
@@ -366,6 +418,15 @@ namespace leeyez_kai
             // 初期ハイライト
             UpdateScaleModeHighlight(ImageViewer.ScaleMode.FitWindow);
             UpdateViewModeHighlight();
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam);
+        private const uint EM_SETCUEBANNER = 0x1501;
+
+        private static void SetPlaceholder(TextBox textBox, string text)
+        {
+            SendMessage(textBox.Handle, EM_SETCUEBANNER, (IntPtr)1, text);
         }
     }
 }

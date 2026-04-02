@@ -180,7 +180,7 @@ namespace leeyez_kai.Controls
             {
                 try
                 {
-                    var p = Process.Start(new ProcessStartInfo(c, "-version") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true });
+                    using var p = Process.Start(new ProcessStartInfo(c, "-version") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true });
                     p?.WaitForExit(2000);
                     if (p?.ExitCode == 0) { _ffmpegPath = c; return c; }
                 }
@@ -323,9 +323,9 @@ namespace leeyez_kai.Controls
                     }
 
                     // Bitmapバッファ再利用（毎フレームnew/Disposeしない）
-                    Bitmap bmp;
                     lock (_frameLock)
                     {
+                        Bitmap bmp;
                         if (_backBuffer != null && _backBuffer.Width == _videoWidth && _backBuffer.Height == _videoHeight)
                             bmp = _backBuffer;
                         else
@@ -333,13 +333,9 @@ namespace leeyez_kai.Controls
                             _backBuffer?.Dispose();
                             bmp = new Bitmap(_videoWidth, _videoHeight, PixelFormat.Format32bppPArgb);
                         }
-                    }
-                    var data = bmp.LockBits(new Rectangle(0, 0, _videoWidth, _videoHeight), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
-                    Marshal.Copy(buffer, 0, data.Scan0, Math.Min(frameSize, data.Stride * _videoHeight));
-                    bmp.UnlockBits(data);
-
-                    lock (_frameLock)
-                    {
+                        var data = bmp.LockBits(new Rectangle(0, 0, _videoWidth, _videoHeight), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+                        Marshal.Copy(buffer, 0, data.Scan0, Math.Min(frameSize, data.Stride * _videoHeight));
+                        bmp.UnlockBits(data);
                         _backBuffer = _currentFrame; // 前のフレームをバックバッファに
                         _currentFrame = bmp;
                     }

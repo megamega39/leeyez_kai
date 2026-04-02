@@ -14,11 +14,28 @@ namespace leeyez_kai.Services
         public bool CanGoBack => _historyIndex > 0;
         public bool CanGoForward => _historyIndex < _history.Count - 1;
 
-        /// <summary>戻る履歴（現在位置より前）</summary>
-        public List<string> BackHistory => _historyIndex > 0 ? _history.GetRange(0, _historyIndex).AsEnumerable().Reverse().ToList() : new();
+        /// <summary>戻る履歴（現在位置より前、新しい順）</summary>
+        public List<string> BackHistory
+        {
+            get
+            {
+                if (_historyIndex <= 0) return new();
+                var list = new List<string>(_historyIndex);
+                for (int i = _historyIndex - 1; i >= 0; i--)
+                    list.Add(_history[i]);
+                return list;
+            }
+        }
 
         /// <summary>進む履歴（現在位置より後）</summary>
-        public List<string> ForwardHistory => _historyIndex < _history.Count - 1 ? _history.GetRange(_historyIndex + 1, _history.Count - _historyIndex - 1) : new();
+        public List<string> ForwardHistory
+        {
+            get
+            {
+                if (_historyIndex >= _history.Count - 1) return new();
+                return _history.GetRange(_historyIndex + 1, _history.Count - _historyIndex - 1);
+            }
+        }
 
         public void NavigateTo(string path)
         {

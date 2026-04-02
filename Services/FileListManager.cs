@@ -30,6 +30,7 @@ namespace leeyez_kai.Services
 
         private List<FileItem> _allItems = new();
         private List<FileItem> _filteredItems = new();
+        private Dictionary<string, int> _pathToListIndex = new();
         private string _filter = string.Empty;
         private string _sortColumn = "Name";
         private bool _sortDescending;
@@ -98,15 +99,15 @@ namespace leeyez_kai.Services
                 // フォルダ（再帰モードでは非表示）
                 if (!RecursiveMode)
                 {
-                    foreach (var dir in di.GetDirectories())
+                    foreach (var dir in di.EnumerateDirectories())
                     {
-                        try { _allItems.Add(FileItem.FromDirectoryInfo(dir)); } catch { }
+                        try { _allItems.Add(FileItem.FromDirectoryInfo(dir)); } catch (Exception ex) { Logger.Log($"Failed to enumerate directory: {ex.Message}"); }
                     }
                 }
 
                 // ファイル
                 var searchOption = RecursiveMode ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-                foreach (var file in di.GetFiles("*", searchOption))
+                foreach (var file in di.EnumerateFiles("*", searchOption))
                 {
                     try
                     {
@@ -115,7 +116,7 @@ namespace leeyez_kai.Services
                         var item = FileItem.FromFileInfo(file);
                         _allItems.Add(item);
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Log($"Failed to enumerate file: {ex.Message}"); }
                 }
             }
             catch (UnauthorizedAccessException) { }
@@ -262,6 +263,10 @@ namespace leeyez_kai.Services
                 items[i] = lvi;
             }
             _listView.Items.AddRange(items);
+
+            _pathToListIndex = new Dictionary<string, int>(_filteredItems.Count);
+            for (int i = 0; i < _filteredItems.Count; i++)
+                _pathToListIndex[_filteredItems[i].FullPath] = i;
 
             _listView.EndUpdate();
         }
@@ -476,8 +481,7 @@ namespace leeyez_kai.Services
                 {
                     if (ct.IsCancellationRequested) return;
                     if (item.IsDirectory) continue;
-                    var ext = FileExtensions.GetExt(item.Name);
-                    if (!FileExtensions.IsImage(ext)) continue;
+                    if (!item.IsImage) continue;
 
                     var thumbKey = "thumb_" + item.FullPath.GetHashCode().ToString("X");
                     lock (_thumbGenerated)
@@ -495,12 +499,13 @@ namespace leeyez_kai.Services
 
                         if (stream == null) continue;
 
-                        var bmp = ImageDecoder.FastDecode(stream, ext, 128, 128, out _, out _);
+                        var skBmp = ImageDecoder.FastDecode(stream, item.Ext, 128, 128, out _, out _);
                         stream.Dispose();
-                        if (bmp == null || ct.IsCancellationRequested) { bmp?.Dispose(); continue; }
+                        if (skBmp == null || ct.IsCancellationRequested) { skBmp?.Dispose(); continue; }
 
-                        var thumb = CreateSquareThumb(bmp, 128);
-                        bmp.Dispose();
+                        using var gdiBmp = SKBitmapHelper.ToGdiBitmap(skBmp);
+                        skBmp.Dispose();
+                        var thumb = CreateSquareThumb(gdiBmp, 128);
 
                         if (ct.IsCancellationRequested) { thumb.Dispose(); continue; }
 
@@ -513,7 +518,7 @@ namespace leeyez_kai.Services
                             batch = new List<(string, Bitmap, string)>();
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Log($"Failed to generate thumbnail: {ex.Message}"); }
                 }
 
                 // 残りをフラッシュ
@@ -538,19 +543,14 @@ namespace leeyez_kai.Services
                             _largeIconList.Images.Add(thumbKey, thumb);
 
                         // インデックスで直接アクセス（O(1)）
-                        for (int i = 0; i < _listView.Items.Count; i++)
-                        {
-                            if (_listView.Items[i].Tag is FileItem fi && fi.FullPath == fullPath)
-                            {
-                                _listView.Items[i].ImageKey = thumbKey;
-                                break;
-                            }
-                        }
+                        if (_pathToListIndex.TryGetValue(fullPath, out int idx)
+                            && idx < _listView.Items.Count)
+                            _listView.Items[idx].ImageKey = thumbKey;
                     }
                     _listView.EndUpdate();
                 });
             }
-            catch { }
+            catch (Exception ex) { Logger.Log($"Failed to flush thumbnail batch: {ex.Message}"); }
         }
 
         private static Bitmap CreateSquareThumb(Bitmap src, int size)

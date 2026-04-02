@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -26,8 +27,14 @@ namespace leeyez_kai
         private List<ArchiveEntryInfo>? _archiveEntries;
         private string? _currentArchivePath;
         private readonly Dictionary<string, List<ArchiveEntryInfo>> _archiveEntryCache = new();
-        // 書庫内ファイルのStreamキャッシュ（展開済みバイト列）
+        private readonly List<string> _archiveEntryCacheOrder = new();
+        private const int MaxArchiveEntryCacheSize = 20;
+        // 書庫内ファイルのStreamキャッシュ（展開済みバイト列、LRU管理）
+        private readonly object _streamCacheLock = new();
         private readonly Dictionary<string, byte[]> _archiveStreamCache = new();
+        private readonly LinkedList<string> _archiveStreamCacheOrder = new();
+        private long _archiveStreamCacheBytes;
+        private const long MaxArchiveStreamCacheBytes = 20 * 1024 * 1024; // 20MB
 
         // ── ビューアー状態 ──
         private List<FileItem> _viewableFiles = new();
@@ -43,6 +50,7 @@ namespace leeyez_kai
         // ── 高速化 ──
         private System.Windows.Forms.Timer? _debounceTimer;
         private int _pendingFileIndex = -1;
+        private int _navDirection = 1; // プリフェッチ方向予測用
         private CancellationTokenSource? _prefetchCts;
 
         // ── UIコントロール ──
@@ -55,6 +63,7 @@ namespace leeyez_kai
         private Panel _addressBarPanel = null!;
         private TextBox _addressBox = null!;
         private Label _addressLabel = null!;
+        private FlowLayoutPanel _breadcrumbPanel = null!;
 
         private SplitContainer _mainSplit = null!;
         private SplitContainer _sidebarSplit = null!;
@@ -85,6 +94,9 @@ namespace leeyez_kai
         private FileItem? _hoverItem;
         private bool _hoverPreviewEnabled;
 
+        // 状態キャッシュ
+        private AppState? _cachedState;
+
         // 設定
         private AppSettings _appSettings = AppSettings.Load();
         private readonly ShortcutManager _shortcutManager = new();
@@ -97,8 +109,14 @@ namespace leeyez_kai
         private Label _sidebarLabel = null!;
         private Panel _bookshelfToolbar = null!;
 
+        // 履歴ボタン（フィールドはMainForm.History.csで定義）
+        private ToolStripButton _btnHistory = null!;
+
         public MainForm()
         {
+            // 言語設定を適用
+            i18n.Localization.SetLanguage(_appSettings.Language);
+
             // メモリ上限からキャッシュ枚数を計算（1枚≒4MB）
             _imageCache = new ImageCache(Math.Max(16, _appSettings.MemoryLimitMB / 4));
 
@@ -129,6 +147,13 @@ namespace leeyez_kai
                 _skipSelectPath = _treeManager.IsSelectedUnderFavorites();
                 NavigateTo(path);
                 _skipSelectPath = false;
+            };
+            _treeManager.FavoritesChanged += (favorites) =>
+            {
+                var state = _cachedState ?? PersistenceService.LoadState() ?? new AppState();
+                _cachedState = state;
+                state.Favorites = favorites;
+                SaveCurrentState();
             };
 
             _fileListManager = new FileListManager(_fileList);
@@ -164,8 +189,10 @@ namespace leeyez_kai
             _virtualGrid.ItemDoubleClicked += OnFileDoubleClicked;
 
             _bookshelfService.Load();
+            _historyService.Load();
             SetupHoverPreview();
             SetupBookshelf();
+            SetupHistory();
         }
 
         private void SetupSevenZipPath()
@@ -197,7 +224,7 @@ namespace leeyez_kai
                         if (File.Exists(dll)) { _sevenZipLibPath = dll; return; }
                     }
                 }
-                catch { }
+                catch (Exception ex) { Logger.Log($"Failed to find 7z.dll from NuGet: {ex.Message}"); }
             }
 
             Logger.Log("WARNING: 7z.dll not found");
@@ -212,26 +239,86 @@ namespace leeyez_kai
             _mediaPlayer.Stop();
             CleanupTempMedia();
             SaveCurrentState();
+            _historyService.Save();
+            _historyService.Dispose();
             _imageCache.Dispose();
             _folderWatcher?.Dispose();
+            _archiveDebounce?.Dispose();
+            _debounceTimer?.Dispose();
+            _prefetchCts?.Dispose();
+            ArchiveService.CloseCache();
         }
 
         // ── 設定・ヘルプ ──
         private void ShowSettings()
         {
+            var prevLang = _appSettings.Language;
             using var dlg = new SettingsDialog(_appSettings, _shortcutManager);
             if (dlg.ShowDialog(this) == DialogResult.OK)
             {
-                // 設定を適用
-                _folderTree.Font = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
-                _fileList.Font = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
-                _bookshelfTree.Font = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
+                // 言語変更時にUIテキストを更新
+                if (_appSettings.Language != prevLang)
+                    ApplyLanguageToUI();
+                // 設定を適用（古いFontをDisposeしてからセット）
+                var newFont = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
+                var oldFont = _folderTree.Font;
+                _folderTree.Font = newFont;
+                _fileList.Font = newFont;
+                _bookshelfTree.Font = newFont;
+                _historyList.Font = newFont;
+                if (oldFont != null && oldFont != newFont) oldFont.Dispose();
                 _fileListManager!.RecursiveMode = _appSettings.RecursiveMedia;
                 _imageCache.SetMaxEntries(Math.Max(16, _appSettings.MemoryLimitMB / 4));
                 // 再読み込み
                 if (!string.IsNullOrEmpty(_nav.CurrentPath))
                     Refresh();
                 Invalidate(true);
+            }
+        }
+
+        private void ApplyLanguageToUI()
+        {
+            // サイドバーラベル
+            if (!_isHistoryMode && !_isBookshelfMode)
+                _sidebarLabel.Text = i18n.Localization.Get("sidebar.folder");
+
+            // ナビゲーションバー
+            _btnBack.ToolTipText = i18n.Localization.Get("nav.back");
+            _btnForward.ToolTipText = i18n.Localization.Get("nav.forward");
+            _btnUp.ToolTipText = i18n.Localization.Get("nav.up");
+            _btnRefresh.ToolTipText = i18n.Localization.Get("nav.refresh");
+            _btnHoverPreview.ToolTipText = i18n.Localization.Get("nav.hover");
+            _btnBookshelf.ToolTipText = i18n.Localization.Get("nav.bookshelf");
+            _btnHistory.ToolTipText = i18n.Localization.Get("history.label");
+            _btnListView.ToolTipText = i18n.Localization.Get("nav.list");
+            _btnGridView.ToolTipText = i18n.Localization.Get("nav.grid");
+            _btnSettings.ToolTipText = i18n.Localization.Get("nav.settings");
+            _btnHelp.ToolTipText = i18n.Localization.Get("nav.help");
+
+            // アドレスラベル
+            _addressLabel.Text = i18n.Localization.Get("sidebar.address");
+
+            // フィルターのプレースホルダー
+            SetPlaceholder(_filterBox, i18n.Localization.Get("sidebar.filter"));
+            SetPlaceholder(_historyFilterBox, i18n.Localization.Get("sidebar.filter"));
+
+            // 履歴パネル
+            _historyLabel.Text = i18n.Localization.Get("history.label");
+            _historyBtnClear.Text = i18n.Localization.Get("history.clear");
+
+            // 履歴コンテキストメニュー再構築
+            if (_historyList.ContextMenuStrip != null)
+            {
+                var ctx = _historyList.ContextMenuStrip;
+                ctx.Items.Clear();
+                ctx.Items.Add(i18n.Localization.Get("ctx.openwith"), null, (s, e) => OpenHistoryWithAssociation());
+                ctx.Items.Add(i18n.Localization.Get("ctx.explorer"), null, (s, e) => ShowHistoryInExplorer());
+                ctx.Items.Add(i18n.Localization.Get("ctx.copypath"), null, (s, e) => CopyHistoryPath());
+                ctx.Items.Add(new ToolStripSeparator());
+                ctx.Items.Add(i18n.Localization.Get("ctx.addfav"), null, (s, e) => AddHistoryToFavorites());
+                ctx.Items.Add(i18n.Localization.Get("ctx.addshelf"), null, (s, e) => AddHistoryToBookshelf());
+                ctx.Items.Add(new ToolStripSeparator());
+                ctx.Items.Add(i18n.Localization.Get("history.deleteentry"), null, (s, e) => DeleteHistoryEntry());
             }
         }
 

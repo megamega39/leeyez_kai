@@ -1,13 +1,16 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using SkiaSharp;
 using leeyez_kai.Models;
 using leeyez_kai.Services;
 
@@ -20,7 +23,9 @@ namespace leeyez_kai.Controls
     public class VirtualGridPanel : Panel
     {
         private List<FileItem> _items = new();
-        private readonly Dictionary<string, Bitmap> _thumbCache = new();
+        private readonly ConcurrentDictionary<string, SKBitmap> _thumbCache = new();
+        private readonly LinkedList<string> _thumbCacheOrder = new(); // LRU順序管理
+        private readonly object _thumbCacheLock = new(); // _thumbCacheOrder保護用
         private CancellationTokenSource? _thumbCts;
         private Func<FileItem, Stream?>? _getFileStream;
         private volatile bool _invalidatePending;
@@ -34,6 +39,11 @@ namespace leeyez_kai.Controls
 
         private static readonly Color SelBg = Color.FromArgb(0xFF, 0xC0, 0xC0);
         private static readonly Color HoverBg = Color.FromArgb(0xE0, 0xE8, 0xFF);
+        private static readonly SolidBrush SelBrush = new(SelBg);
+        private static readonly SolidBrush HoverBrush = new(HoverBg);
+        private static readonly SolidBrush PlaceholderBrush = new(Color.FromArgb(0xD0, 0xD0, 0xD0));
+        private static readonly SolidBrush NameBgBrush = new(Color.FromArgb(180, 255, 255, 255));
+        private static readonly SolidBrush ScrollBarBrush = new(Color.FromArgb(100, 0, 0, 0));
 
         private int _hoverIndex = -1;
 
@@ -145,35 +155,25 @@ namespace leeyez_kai.Controls
 
                 // 背景
                 if (i == _selectedIndex)
-                {
-                    using var b = new SolidBrush(SelBg);
-                    g.FillRectangle(b, rect);
-                }
+                    g.FillRectangle(SelBrush, rect);
                 else if (i == _hoverIndex)
-                {
-                    using var b = new SolidBrush(HoverBg);
-                    g.FillRectangle(b, rect);
-                }
+                    g.FillRectangle(HoverBrush, rect);
 
                 // サムネイル
                 var item = _items[i];
                 if (_thumbCache.TryGetValue(item.FullPath, out var thumb))
                 {
                     var imgRect = FitRect(thumb.Width, thumb.Height, rect);
-                    g.InterpolationMode = InterpolationMode.Low;
-                    g.DrawImage(thumb, imgRect);
+                    BlitSKBitmap(g, thumb, imgRect);
                 }
                 else
                 {
-                    // プレースホルダー
-                    using var b = new SolidBrush(Color.FromArgb(0xD0, 0xD0, 0xD0));
-                    g.FillRectangle(b, rect.X + 4, rect.Y + 4, rect.Width - 8, rect.Height - 8);
+                    g.FillRectangle(PlaceholderBrush, rect.X + 4, rect.Y + 4, rect.Width - 8, rect.Height - 8);
                 }
 
                 // ファイル名（下部）
                 var nameRect = new Rectangle(rect.X, rect.Bottom - 18, rect.Width, 18);
-                using var nameBg = new SolidBrush(Color.FromArgb(180, 255, 255, 255));
-                g.FillRectangle(nameBg, nameRect);
+                g.FillRectangle(NameBgBrush, nameRect);
                 TextRenderer.DrawText(g, item.Name, Font, nameRect, Color.Black,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             }
@@ -183,8 +183,7 @@ namespace leeyez_kai.Controls
             {
                 int barHeight = Math.Max(20, Height * Height / TotalHeight);
                 int barY = (int)((float)_scrollOffset / TotalHeight * Height);
-                using var barBrush = new SolidBrush(Color.FromArgb(100, 0, 0, 0));
-                g.FillRectangle(barBrush, Width - 8, barY, 6, barHeight);
+                g.FillRectangle(ScrollBarBrush, Width - 8, barY, 6, barHeight);
             }
         }
 
@@ -193,6 +192,55 @@ namespace leeyez_kai.Controls
             float scale = Math.Min((float)(area.Width - 8) / imgW, (float)(area.Height - 24) / imgH);
             int w = (int)(imgW * scale), h = (int)(imgH * scale);
             return new Rectangle(area.X + (area.Width - w) / 2, area.Y + (area.Height - 24 - h) / 2, w, h);
+        }
+
+        // Win32 API for StretchDIBits
+        [DllImport("gdi32.dll")]
+        private static extern int StretchDIBits(IntPtr hdc, int xDest, int yDest, int wDest, int hDest,
+            int xSrc, int ySrc, int wSrc, int hSrc, IntPtr lpBits, ref BITMAPINFO lpBmi, uint iUsage, uint dwRop);
+        [DllImport("gdi32.dll")]
+        private static extern int SetStretchBltMode(IntPtr hdc, int mode);
+        private const int HALFTONE = 4;
+        private const uint DIB_RGB_COLORS = 0;
+        private const uint SRCCOPY = 0x00CC0020;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BITMAPINFOHEADER
+        {
+            public uint biSize; public int biWidth; public int biHeight;
+            public ushort biPlanes; public ushort biBitCount; public uint biCompression;
+            public uint biSizeImage; public int biXPelsPerMeter; public int biYPelsPerMeter;
+            public uint biClrUsed; public uint biClrImportant;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct BITMAPINFO { public BITMAPINFOHEADER bmiHeader; }
+
+        private static void BlitSKBitmap(Graphics g, SKBitmap skBmp, Rectangle destRect)
+        {
+            var bmi = new BITMAPINFO
+            {
+                bmiHeader = new BITMAPINFOHEADER
+                {
+                    biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
+                    biWidth = skBmp.Width,
+                    biHeight = -skBmp.Height,
+                    biPlanes = 1,
+                    biBitCount = 32,
+                    biCompression = 0,
+                    biSizeImage = (uint)(skBmp.RowBytes * skBmp.Height)
+                }
+            };
+            IntPtr hdc = g.GetHdc();
+            try
+            {
+                SetStretchBltMode(hdc, HALFTONE);
+                StretchDIBits(hdc,
+                    destRect.X, destRect.Y, destRect.Width, destRect.Height,
+                    0, 0, skBmp.Width, skBmp.Height,
+                    skBmp.GetPixels(), ref bmi, DIB_RGB_COLORS, SRCCOPY);
+            }
+            finally { g.ReleaseHdc(hdc); }
         }
 
         #endregion
@@ -257,7 +305,7 @@ namespace leeyez_kai.Controls
                 if (i < 0 || i >= _items.Count) continue;
                 var item = _items[i];
                 if (_thumbCache.ContainsKey(item.FullPath) || item.IsDirectory) continue;
-                if (!FileExtensions.IsImage(FileExtensions.GetExt(item.Name))) continue;
+                if (!item.IsImage) continue;
                 targets.Add((i, item));
             }
 
@@ -271,22 +319,26 @@ namespace leeyez_kai.Controls
                     _thumbSemaphore.Wait(ct);
                     try
                     {
-                        var ext = FileExtensions.GetExt(target.item.Name);
                         Stream? stream = _getFileStream?.Invoke(target.item);
                         if (stream == null) return;
 
-                        var bmp = ImageDecoder.FastDecode(stream, ext, _thumbSize, _thumbSize, out _, out _);
+                        var skBmp = ImageDecoder.FastDecode(stream, target.item.Ext, _thumbSize, _thumbSize, out _, out _);
                         stream.Dispose();
-                        if (bmp == null || ct.IsCancellationRequested) { bmp?.Dispose(); return; }
+                        if (skBmp == null || ct.IsCancellationRequested) { skBmp?.Dispose(); return; }
 
-                        // サムネイルキャッシュ上限500枚
-                        if (_thumbCache.Count >= 500)
+                        // サムネイルキャッシュ上限500枚（LRU）
+                        lock (_thumbCacheLock)
                         {
-                            var oldest = _thumbCache.Keys.First();
-                            _thumbCache[oldest]?.Dispose();
-                            _thumbCache.Remove(oldest);
+                            if (_thumbCache.Count >= 500 && _thumbCacheOrder.Last != null)
+                            {
+                                var oldest = _thumbCacheOrder.Last.Value;
+                                _thumbCacheOrder.RemoveLast();
+                                if (_thumbCache.TryRemove(oldest, out var old))
+                                    old?.Dispose();
+                            }
+                            _thumbCacheOrder.AddFirst(target.item.FullPath);
                         }
-                        _thumbCache[target.item.FullPath] = bmp;
+                        _thumbCache[target.item.FullPath] = skBmp;
 
                         // デバウンス: 複数サムネイルの再描画を1回にまとめる
                         if (!ct.IsCancellationRequested && !_invalidatePending)
@@ -295,7 +347,7 @@ namespace leeyez_kai.Controls
                             BeginInvoke(() => { _invalidatePending = false; Invalidate(); });
                         }
                     }
-                    catch { }
+                    catch (Exception ex) { Logger.Log($"Failed to generate grid thumbnail: {ex.Message}"); }
                     finally { _thumbSemaphore.Release(); }
                 });
             }, ct);
@@ -308,6 +360,7 @@ namespace leeyez_kai.Controls
             _thumbCts?.Cancel();
             foreach (var bmp in _thumbCache.Values) bmp.Dispose();
             _thumbCache.Clear();
+            lock (_thumbCacheLock) { _thumbCacheOrder.Clear(); }
         }
 
         protected override void Dispose(bool disposing)
