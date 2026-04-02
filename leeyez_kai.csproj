@@ -35,7 +35,7 @@
     <PackageReference Include="NAudio" Version="2.3.0" />
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="SkiaSharp.Views.WindowsForms" Version="2.88.9" />
-    <PackageReference Include="SevenZipExtractor" Version="1.0.17" />
+    <PackageReference Include="SevenZipExtractor" Version="1.0.17" ExcludeAssets="native;build" />
     <PackageReference Include="SharpCompress" Version="0.38.0" />
     <PackageReference Include="7z.Libs" Version="24.9.0" />
     <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
