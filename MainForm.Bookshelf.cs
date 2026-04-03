@@ -3,6 +3,7 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+using leeyez_kai.i18n;
 using leeyez_kai.Models;
 using leeyez_kai.Services;
 
@@ -26,12 +27,18 @@ namespace leeyez_kai
 
             // 本棚ツリーの右クリックメニュー
             var bookshelfCtx = new ContextMenuStrip();
-            bookshelfCtx.Items.Add("開く", null, (s, e) => OpenBookshelfSelected());
-            bookshelfCtx.Items.Add("関連付けで開く", null, (s, e) => OpenBookshelfWithAssociation());
-            bookshelfCtx.Items.Add("エクスプローラで開く", null, (s, e) => ShowBookshelfInExplorer());
+            bookshelfCtx.Items.Add(Localization.Get("menu.open"), null, (s, e) => OpenBookshelfSelected());
+            bookshelfCtx.Items.Add(Localization.Get("menu.openwith"), null, (s, e) => OpenBookshelfWithAssociation());
+            bookshelfCtx.Items.Add(Localization.Get("menu.openexplorer"), null, (s, e) => ShowBookshelfInExplorer());
             bookshelfCtx.Items.Add(new ToolStripSeparator());
-            bookshelfCtx.Items.Add("名前の変更", null, (s, e) => RenameBookshelfFile());
-            bookshelfCtx.Items.Add("本棚から解除", null, (s, e) => DeleteBookshelfSelected());
+            bookshelfCtx.Items.Add(Localization.Get("menu.rename"), null, (s, e) => RenameBookshelfFile());
+            bookshelfCtx.Items.Add(Localization.Get("menu.removebookshelf"), null, (s, e) => DeleteBookshelfSelected());
+            bookshelfCtx.Opening += (s, e) =>
+            {
+                var tag = _bookshelfTree.SelectedNode?.Tag?.ToString();
+                if (tag == null || tag == "BOOKSHELF_ROOT")
+                    e.Cancel = true; // ルートノードではメニューを表示しない
+            };
 
             _bookshelfTree.MouseUp += (s, e) =>
             {
@@ -55,7 +62,11 @@ namespace leeyez_kai
 
             if (_isBookshelfMode)
             {
-                BuildBookshelfTree();
+                if (_bookshelfTree.Nodes.Count == 0 || _bookshelfDirty)
+                {
+                    BuildBookshelfTree();
+                    _bookshelfDirty = false;
+                }
                 _folderTree.Visible = false;
                 _historyList.Visible = false;
                 _historyToolbar.Visible = false;
@@ -75,6 +86,8 @@ namespace leeyez_kai
                 _bookshelfTree.Visible = false;
                 _bookshelfToolbar.Visible = false;
                 _folderTree.Visible = true;
+                if (!string.IsNullOrEmpty(_nav.CurrentPath))
+                    _treeManager?.SelectPath(_nav.CurrentPath);
 
                 panel.Controls.SetChildIndex(_folderTree, 0);
 
@@ -92,7 +105,7 @@ namespace leeyez_kai
             _bookshelfTree.Nodes.Clear();
 
             // ルートノード「本棚」
-            var rootNode = new TreeNode("本棚")
+            var rootNode = new TreeNode(Localization.Get("sidebar.bookshelf"))
             {
                 Tag = "BOOKSHELF_ROOT",
                 ImageKey = "folder",
@@ -114,7 +127,6 @@ namespace leeyez_kai
                     catNode.Nodes.Add(CreateBookshelfItemNode(item));
                 }
                 rootNode.Nodes.Add(catNode);
-                catNode.Expand();
             }
 
             // 未分類
@@ -149,10 +161,24 @@ namespace leeyez_kai
 
         private void BookshelfTree_AfterSelect(object? sender, TreeViewEventArgs e)
         {
+            if (_isNavigating) return;
             var tag = e.Node?.Tag?.ToString();
             if (tag == null) return;
 
-            if (tag.StartsWith("ITEM:"))
+            if (tag.StartsWith("CAT:"))
+            {
+                var catId = tag.Substring(4);
+                var cat = _bookshelfService.Categories.FirstOrDefault(c => c.Id == catId);
+                if (cat != null)
+                {
+                    _currentArchivePath = null;
+                    _archiveEntries = null;
+                    _fileListManager?.LoadPaths(cat.Items.Select(i => (i.Name, i.Path)));
+                    UpdateViewableFiles();
+                    _statusLeft.Text = cat.Name;
+                }
+            }
+            else if (tag.StartsWith("ITEM:"))
             {
                 var path = tag.Substring(5);
                 if (File.Exists(path) || Directory.Exists(path))
@@ -174,6 +200,7 @@ namespace leeyez_kai
                 {
                     _bookshelfService.AddItem(catId, fileName, filePath);
                     if (_isBookshelfMode) BuildBookshelfTree();
+                    else _bookshelfDirty = true;
                 });
             }
 
@@ -181,16 +208,42 @@ namespace leeyez_kai
                 menu.Items.Add(new ToolStripSeparator());
 
             // 新しいカテゴリを作成
-            menu.Items.Add("新しいカテゴリを作成...", null, (s, e) =>
+            menu.Items.Add(Localization.Get("bookshelf.newcategory"), null, (s, e) =>
             {
-                var name = ShowInputDialog("新しいカテゴリ", "カテゴリ名を入力してください:");
+                var name = ShowInputDialog(Localization.Get("bookshelf.newcategory"), Localization.Get("bookshelf.entername"));
                 if (!string.IsNullOrWhiteSpace(name))
                 {
                     var cat = _bookshelfService.AddCategory(name);
                     _bookshelfService.AddItem(cat.Id, fileName, filePath);
                     if (_isBookshelfMode) BuildBookshelfTree();
+                    else _bookshelfDirty = true;
                 }
             });
+
+            // フォルダの場合: カテゴリとして追加
+            if (Directory.Exists(filePath))
+            {
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add(Localization.Get("menu.addcategory"), null, (s, e) =>
+                {
+                    var folderName = Path.GetFileName(filePath);
+                    if (string.IsNullOrEmpty(folderName)) folderName = filePath;
+                    var cat = _bookshelfService.AddCategory(folderName);
+                    foreach (var file in Directory.EnumerateFiles(filePath))
+                    {
+                        var ext = FileExtensions.GetExt(file);
+                        if (FileExtensions.IsArchive(ext) || FileExtensions.IsViewable(ext))
+                            _bookshelfService.AddItem(cat.Id, Path.GetFileName(file), file);
+                    }
+                    // サブフォルダも登録
+                    foreach (var dir in Directory.EnumerateDirectories(filePath))
+                    {
+                        _bookshelfService.AddItem(cat.Id, Path.GetFileName(dir), dir);
+                    }
+                    if (_isBookshelfMode) BuildBookshelfTree();
+                    else _bookshelfDirty = true;
+                });
+            }
 
             menu.Show(anchor, location);
         }
@@ -207,7 +260,7 @@ namespace leeyez_kai
             var label = new Label { Text = prompt, Left = 10, Top = 12, Width = 310 };
             var textBox = new TextBox { Left = 10, Top = 36, Width = 310 };
             var btnOk = new Button { Text = "OK", Left = 160, Top = 70, Width = 75, DialogResult = DialogResult.OK };
-            var btnCancel = new Button { Text = "キャンセル", Left = 245, Top = 70, Width = 75, DialogResult = DialogResult.Cancel };
+            var btnCancel = new Button { Text = Localization.Get("bookshelf.cancel"), Left = 245, Top = 70, Width = 75, DialogResult = DialogResult.Cancel };
             form.AcceptButton = btnOk;
             form.CancelButton = btnCancel;
             form.Controls.AddRange(new Control[] { label, textBox, btnOk, btnCancel });
@@ -218,7 +271,7 @@ namespace leeyez_kai
         // ── ツールバーアクション ──
         private void BookshelfNewCategory()
         {
-            var name = ShowInputDialog("新しいカテゴリ", "カテゴリ名を入力してください:");
+            var name = ShowInputDialog(Localization.Get("bookshelf.newcategory"), Localization.Get("bookshelf.entername"));
             if (!string.IsNullOrWhiteSpace(name))
             {
                 _bookshelfService.AddCategory(name);
@@ -295,13 +348,54 @@ namespace leeyez_kai
                 catch (Exception ex)
                 {
                     e.CancelEdit = true;
-                    MessageBox.Show($"名前の変更に失敗しました: {ex.Message}", "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    MessageBox.Show(string.Format(Localization.Get("msg.renamefailed"), ex.Message), Localization.Get("msg.error"), MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
             else
             {
                 e.CancelEdit = true;
             }
+        }
+
+        private void SelectBookshelfNode(string path)
+        {
+            var savedNav = _isNavigating;
+            _isNavigating = true;
+            try
+            {
+                var targetTag = "ITEM:" + path;
+                foreach (TreeNode root in _bookshelfTree.Nodes)
+                {
+                    foreach (TreeNode catNode in root.Nodes)
+                    {
+                        // カテゴリ直下のITEM:ノード
+                        if (string.Equals(catNode.Tag?.ToString(), targetTag, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!root.IsExpanded) root.Expand();
+                            _bookshelfTree.SelectedNode = catNode;
+                            return;
+                        }
+                        // カテゴリ配下のITEM:ノード
+                        foreach (TreeNode itemNode in catNode.Nodes)
+                        {
+                            if (string.Equals(itemNode.Tag?.ToString(), targetTag, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!root.IsExpanded) root.Expand();
+                                if (!catNode.IsExpanded) catNode.Expand();
+                                _bookshelfTree.SelectedNode = itemNode;
+                                return;
+                            }
+                        }
+                    }
+                    // ルート直下の未分類ITEM:ノード
+                    if (string.Equals(root.Tag?.ToString(), targetTag, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _bookshelfTree.SelectedNode = root;
+                        return;
+                    }
+                }
+            }
+            finally { _isNavigating = savedNav; }
         }
 
         private string? GetBookshelfSelectedPath()
@@ -362,7 +456,7 @@ namespace leeyez_kai
                 var cat = _bookshelfService.Categories.FirstOrDefault(c => c.Id == catId);
                 if (cat == null) return;
 
-                var newName = ShowInputDialog("カテゴリ名の変更", "新しい名前:");
+                var newName = ShowInputDialog(Localization.Get("bookshelf.renametitle"), Localization.Get("bookshelf.newname"));
                 if (!string.IsNullOrWhiteSpace(newName))
                 {
                     _bookshelfService.RenameCategory(catId, newName);
@@ -379,8 +473,8 @@ namespace leeyez_kai
             if (tag.StartsWith("CAT:"))
             {
                 var catId = tag.Substring(4);
-                if (MessageBox.Show("このカテゴリを本棚から解除しますか？\n（中のアイテムも解除されます。ファイル自体は削除されません）",
-                    "確認", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                if (MessageBox.Show(Localization.Get("bookshelf.removeconfirm"),
+                    Localization.Get("msg.confirm"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                 {
                     _bookshelfService.RemoveCategory(catId);
                     BuildBookshelfTree();

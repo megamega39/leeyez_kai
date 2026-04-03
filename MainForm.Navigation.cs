@@ -17,13 +17,17 @@ namespace leeyez_kai
             _isNavigating = true;
             try
             {
+                // 前回の書庫デバウンスをキャンセル（通過時の誤発火防止）
+                _archiveDebounce?.Stop();
+
                 _nav.NavigateTo(path);
                 _addressBox.Text = path;
                 UpdateBreadcrumb(path);
                 UpdateNavButtons();
                 AutoSaveState();
                 RecordHistory(path);
-                if (!_skipSelectPath) _treeManager?.SelectPath(path);
+                if (!_skipSelectPath && !_isBookshelfMode && !_isHistoryMode) _treeManager?.SelectPath(path);
+                if (_isBookshelfMode) SelectBookshelfNode(path);
 
                 var archiveSplit = SplitArchivePath(path);
                 if (archiveSplit != null)

@@ -100,6 +100,8 @@ namespace leeyez_kai
                 _historyList.Visible = false;
                 _historyToolbar.Visible = false;
                 _folderTree.Visible = true;
+                if (!string.IsNullOrEmpty(_nav.CurrentPath))
+                    _treeManager?.SelectPath(_nav.CurrentPath);
 
                 panel.Controls.SetChildIndex(_folderTree, 0);
 

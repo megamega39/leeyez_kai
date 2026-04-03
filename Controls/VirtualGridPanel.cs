@@ -28,6 +28,7 @@ namespace leeyez_kai.Controls
         private readonly object _thumbCacheLock = new(); // _thumbCacheOrder保護用
         private CancellationTokenSource? _thumbCts;
         private Func<FileItem, Stream?>? _getFileStream;
+        private Func<FileItem, (Stream? stream, string ext)>? _getThumbStream;
         private volatile bool _invalidatePending;
 
         private int _thumbSize = 128;
@@ -36,6 +37,7 @@ namespace leeyez_kai.Controls
         private int _rowCount;
         private int _scrollOffset;
         private int _selectedIndex = -1;
+        private readonly HashSet<int> _selectedIndices = new();
 
         private static readonly Color SelBg = Color.FromArgb(0xFF, 0xC0, 0xC0);
         private static readonly Color HoverBg = Color.FromArgb(0xE0, 0xE8, 0xFF);
@@ -49,6 +51,7 @@ namespace leeyez_kai.Controls
 
         public event Action<FileItem>? ItemSelected;
         public event Action<FileItem>? ItemDoubleClicked;
+        public event Action<FileItem, Point>? ItemRightClicked;
 
         public VirtualGridPanel()
         {
@@ -67,12 +70,24 @@ namespace leeyez_kai.Controls
 
         public void SetFileStreamProvider(Func<FileItem, Stream?> provider) => _getFileStream = provider;
 
+        public void SetThumbnailSize(int size)
+        {
+            if (_thumbSize == size) return;
+            _thumbSize = size;
+            ClearCache();
+            CalcLayout();
+            Invalidate();
+            LoadVisibleThumbs();
+        }
+        public void SetThumbStreamProvider(Func<FileItem, (Stream? stream, string ext)> provider) => _getThumbStream = provider;
+
         public void SetItems(List<FileItem> items)
         {
             _thumbCts?.Cancel();
             _items = items;
             _scrollOffset = 0;
             _selectedIndex = -1;
+            _selectedIndices.Clear();
             CalcLayout();
             Invalidate();
             LoadVisibleThumbs();
@@ -80,17 +95,40 @@ namespace leeyez_kai.Controls
 
         public void SelectByPath(string path)
         {
+            _selectedIndices.Clear();
             for (int i = 0; i < _items.Count; i++)
             {
                 if (_items[i].FullPath.Equals(path, StringComparison.OrdinalIgnoreCase))
                 {
                     _selectedIndex = i;
+                    _selectedIndices.Add(i);
                     EnsureVisible(i);
                     Invalidate();
                     LoadVisibleThumbs();
                     return;
                 }
             }
+        }
+
+        public void SelectByPaths(IEnumerable<string> paths)
+        {
+            _selectedIndices.Clear();
+            _selectedIndex = -1;
+            foreach (var path in paths)
+            {
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    if (_items[i].FullPath.Equals(path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (_selectedIndex < 0) _selectedIndex = i;
+                        _selectedIndices.Add(i);
+                        break;
+                    }
+                }
+            }
+            if (_selectedIndex >= 0) EnsureVisible(_selectedIndex);
+            Invalidate();
+            LoadVisibleThumbs();
         }
 
         public int SelectedIndex => _selectedIndex;
@@ -154,7 +192,7 @@ namespace leeyez_kai.Controls
                 if (rect.Bottom < 0 || rect.Top > Height) continue;
 
                 // 背景
-                if (i == _selectedIndex)
+                if (i == _selectedIndex || _selectedIndices.Contains(i))
                     g.FillRectangle(SelBrush, rect);
                 else if (i == _hoverIndex)
                     g.FillRectangle(HoverBrush, rect);
@@ -262,8 +300,13 @@ namespace leeyez_kai.Controls
             if (idx >= 0 && idx < _items.Count)
             {
                 _selectedIndex = idx;
+                _selectedIndices.Clear();
+                _selectedIndices.Add(idx);
                 Invalidate();
-                ItemSelected?.Invoke(_items[idx]);
+                if (e.Button == MouseButtons.Right)
+                    ItemRightClicked?.Invoke(_items[idx], PointToScreen(e.Location));
+                else
+                    ItemSelected?.Invoke(_items[idx]);
             }
         }
 
@@ -304,8 +347,8 @@ namespace leeyez_kai.Controls
             {
                 if (i < 0 || i >= _items.Count) continue;
                 var item = _items[i];
-                if (_thumbCache.ContainsKey(item.FullPath) || item.IsDirectory) continue;
-                if (!item.IsImage) continue;
+                if (_thumbCache.ContainsKey(item.FullPath)) continue;
+                if (!item.IsImage && !item.IsArchiveExt && !item.IsDirectory) continue;
                 targets.Add((i, item));
             }
 
@@ -319,10 +362,22 @@ namespace leeyez_kai.Controls
                     _thumbSemaphore.Wait(ct);
                     try
                     {
-                        Stream? stream = _getFileStream?.Invoke(target.item);
+                        Stream? stream;
+                        string ext;
+                        if (_getThumbStream != null)
+                        {
+                            var result = _getThumbStream.Invoke(target.item);
+                            stream = result.stream;
+                            ext = result.ext;
+                        }
+                        else
+                        {
+                            stream = _getFileStream?.Invoke(target.item);
+                            ext = target.item.Ext;
+                        }
                         if (stream == null) return;
 
-                        var skBmp = ImageDecoder.FastDecode(stream, target.item.Ext, _thumbSize, _thumbSize, out _, out _);
+                        var skBmp = ImageDecoder.FastDecode(stream, ext, _thumbSize, _thumbSize, out _, out _);
                         stream.Dispose();
                         if (skBmp == null || ct.IsCancellationRequested) { skBmp?.Dispose(); return; }
 

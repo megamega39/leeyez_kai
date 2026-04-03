@@ -10,6 +10,8 @@ namespace leeyez_kai.Services
     public class ImageCache : IDisposable
     {
         private int _maxEntries;
+        private long _maxBytes = 300L * 1024 * 1024; // デフォルト300MB
+        private long _totalBytes;
         private readonly Dictionary<string, CacheEntry> _cache = new();
         private readonly LinkedList<string> _lruOrder = new();
         private readonly object _lock = new();
@@ -19,6 +21,7 @@ namespace leeyez_kai.Services
             public SKBitmap Bitmap { get; set; } = null!;
             public int OriginalWidth { get; set; }
             public int OriginalHeight { get; set; }
+            public long ByteSize { get; set; }
             public LinkedListNode<string> LruNode { get; set; } = null!;
         }
 
@@ -65,19 +68,23 @@ namespace leeyez_kai.Services
                     return false;
                 }
 
-                while (_cache.Count >= _maxEntries && _lruOrder.Last != null)
+                long bitmapBytes = (long)bitmap.Width * bitmap.Height * bitmap.BytesPerPixel;
+
+                while ((_cache.Count >= _maxEntries || _totalBytes + bitmapBytes > _maxBytes) && _lruOrder.Last != null)
                 {
                     var evictKey = _lruOrder.Last.Value;
                     _lruOrder.RemoveLast();
                     if (_cache.TryGetValue(evictKey, out var evicted))
                     {
+                        _totalBytes -= evicted.ByteSize;
                         evicted.Bitmap.Dispose();
                         _cache.Remove(evictKey);
                     }
                 }
 
                 var node = _lruOrder.AddFirst(key);
-                _cache[key] = new CacheEntry { Bitmap = bitmap, OriginalWidth = origW, OriginalHeight = origH, LruNode = node };
+                _cache[key] = new CacheEntry { Bitmap = bitmap, OriginalWidth = origW, OriginalHeight = origH, ByteSize = bitmapBytes, LruNode = node };
+                _totalBytes += bitmapBytes;
                 return true;
             }
         }
@@ -98,11 +105,17 @@ namespace leeyez_kai.Services
                     _lruOrder.RemoveLast();
                     if (_cache.TryGetValue(evictKey, out var evicted))
                     {
+                        _totalBytes -= evicted.ByteSize;
                         evicted.Bitmap.Dispose();
                         _cache.Remove(evictKey);
                     }
                 }
             }
+        }
+
+        public void SetMaxBytes(long maxBytes)
+        {
+            lock (_lock) { _maxBytes = maxBytes; }
         }
 
         public void Clear()
@@ -113,6 +126,7 @@ namespace leeyez_kai.Services
                     entry.Bitmap.Dispose();
                 _cache.Clear();
                 _lruOrder.Clear();
+                _totalBytes = 0;
             }
         }
 

@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using leeyez_kai.i18n;
 using SkiaSharp;
 using leeyez_kai.Controls;
 using leeyez_kai.Models;
@@ -189,7 +190,7 @@ namespace leeyez_kai
                 // Temporary GDI+ Bitmap for clipboard (WinForms API requirement)
                 using var gdiBmp = SKBitmapHelper.ToGdiBitmap(skBmp);
                 Clipboard.SetImage(gdiBmp);
-                _statusLeft.Text = "クリップボードにコピーしました";
+                _statusLeft.Text = Localization.Get("msg.copied");
             }
         }
 
@@ -262,20 +263,24 @@ namespace leeyez_kai
             if (_currentFileIndex < 0 || _currentFileIndex >= _viewableFiles.Count) return;
             var file = _viewableFiles[_currentFileIndex];
             if (!file.FullPath.Contains('!'))
-                try { Process.Start(new ProcessStartInfo(file.FullPath) { UseShellExecute = true }); } catch { }
+                try { Process.Start(new ProcessStartInfo(file.FullPath) { UseShellExecute = true }); }
+                catch { _statusLeft.Text = i18n.Localization.Get("msg.error"); }
         }
 
         private void CopyCurrentPath()
         {
             if (_currentFileIndex >= 0 && _currentFileIndex < _viewableFiles.Count)
+            {
                 Clipboard.SetText(_viewableFiles[_currentFileIndex].FullPath);
+                _statusLeft.Text = i18n.Localization.Get("msg.copied");
+            }
         }
 
         private void CopyParentPath()
         {
             if (_currentFileIndex < 0 || _currentFileIndex >= _viewableFiles.Count) return;
             var dir = System.IO.Path.GetDirectoryName(_viewableFiles[_currentFileIndex].FullPath);
-            if (dir != null) Clipboard.SetText(dir);
+            if (dir != null) { Clipboard.SetText(dir); _statusLeft.Text = i18n.Localization.Get("msg.copied"); }
         }
 
         private void ShowInExplorer()
@@ -283,7 +288,8 @@ namespace leeyez_kai
             if (_currentFileIndex < 0 || _currentFileIndex >= _viewableFiles.Count) return;
             var file = _viewableFiles[_currentFileIndex];
             if (!file.FullPath.Contains('!'))
-                try { Process.Start("explorer.exe", $"/select,\"{file.FullPath}\""); } catch { }
+                try { Process.Start("explorer.exe", $"/select,\"{file.FullPath}\""); }
+                catch { _statusLeft.Text = i18n.Localization.Get("msg.error"); }
         }
 
         private void OpenSelectedFile()
@@ -300,7 +306,8 @@ namespace leeyez_kai
             if (_fileList.SelectedItems.Count != 1) return;
             var item = _fileList.SelectedItems[0].Tag as FileItem;
             if (item != null && !item.FullPath.Contains('!'))
-                try { Process.Start("explorer.exe", $"/select,\"{item.FullPath}\""); } catch { }
+                try { Process.Start("explorer.exe", $"/select,\"{item.FullPath}\""); }
+                catch { _statusLeft.Text = i18n.Localization.Get("msg.error"); }
         }
 
         private void CopySelectedPath()
@@ -308,7 +315,7 @@ namespace leeyez_kai
             if (_fileList.SelectedItems.Count == 1)
             {
                 var item = _fileList.SelectedItems[0].Tag as FileItem;
-                if (item != null) Clipboard.SetText(item.FullPath);
+                if (item != null) { Clipboard.SetText(item.FullPath); _statusLeft.Text = i18n.Localization.Get("msg.copied"); }
             }
         }
 
@@ -398,8 +405,8 @@ namespace leeyez_kai
 
             if (items.Count == 0) return;
             var result = MessageBox.Show(
-                $"{items.Count} 個のアイテムをごみ箱に移動しますか？",
-                "確認", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                string.Format(Localization.Get("msg.confirmdeletemulti"), items.Count),
+                Localization.Get("msg.confirm"), MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
             if (result == DialogResult.Yes)
             {
@@ -416,7 +423,8 @@ namespace leeyez_kai
             if (_fileList.SelectedItems.Count != 1) return;
             var item = _fileList.SelectedItems[0].Tag as FileItem;
             if (item != null && SplitArchivePath(item.FullPath) == null)
-                try { Process.Start(new ProcessStartInfo(item.FullPath) { UseShellExecute = true }); } catch { }
+                try { Process.Start(new ProcessStartInfo(item.FullPath) { UseShellExecute = true }); }
+                catch { _statusLeft.Text = i18n.Localization.Get("msg.error"); }
         }
 
         private void CopySelectedFileName()
@@ -424,7 +432,7 @@ namespace leeyez_kai
             if (_fileList.SelectedItems.Count == 1)
             {
                 var item = _fileList.SelectedItems[0].Tag as FileItem;
-                if (item != null) Clipboard.SetText(item.Name);
+                if (item != null) { Clipboard.SetText(item.Name); _statusLeft.Text = i18n.Localization.Get("msg.copied"); }
             }
         }
 
@@ -454,8 +462,8 @@ namespace leeyez_kai
 
             var name = System.IO.Path.GetFileName(path);
             var result = MessageBox.Show(
-                $"「{name}」をごみ箱に移動しますか？",
-                "確認", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                string.Format(Localization.Get("msg.confirmdelete"), name),
+                Localization.Get("msg.confirm"), MessageBoxButtons.YesNo, MessageBoxIcon.Question);
 
             if (result == DialogResult.Yes)
             {
@@ -492,7 +500,8 @@ namespace leeyez_kai
         {
             var path = GetTreeSelectedPath();
             if (path != null && SplitArchivePath(path) == null && System.IO.File.Exists(path))
-                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); } catch { }
+                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+                catch { _statusLeft.Text = i18n.Localization.Get("msg.error"); }
         }
 
         private void OpenTreeSelectedFolder()
@@ -506,15 +515,17 @@ namespace leeyez_kai
             var path = GetTreeSelectedPath();
             if (path == null) return;
             if (System.IO.File.Exists(path))
-                try { Process.Start("explorer.exe", $"/select,\"{path}\""); } catch { }
+                try { Process.Start("explorer.exe", $"/select,\"{path}\""); }
+                catch { _statusLeft.Text = i18n.Localization.Get("msg.error"); }
             else if (System.IO.Directory.Exists(path))
-                try { Process.Start("explorer.exe", $"\"{path}\""); } catch { }
+                try { Process.Start("explorer.exe", $"\"{path}\""); }
+                catch { _statusLeft.Text = i18n.Localization.Get("msg.error"); }
         }
 
         private void CopyTreeSelectedPath()
         {
             var path = GetTreeSelectedPath();
-            if (path != null) Clipboard.SetText(path);
+            if (path != null) { Clipboard.SetText(path); _statusLeft.Text = i18n.Localization.Get("msg.copied"); }
         }
 
         private void AddTreeSelectedToFavorites()
@@ -555,29 +566,30 @@ namespace leeyez_kai
             var path = GetTreeSelectedPath();
             if (path == null || !System.IO.Directory.Exists(path)) return;
 
-            string newName = "新しいフォルダ";
+            string baseName = Localization.Get("sidebar.newfolder");
+            string newName = baseName;
             string newPath = System.IO.Path.Combine(path, newName);
             int i = 1;
             while (System.IO.Directory.Exists(newPath))
             {
-                newName = $"新しいフォルダ ({i++})";
+                newName = $"{baseName} ({i++})";
                 newPath = System.IO.Path.Combine(path, newName);
             }
             try
             {
                 System.IO.Directory.CreateDirectory(newPath);
-                // ツリーを更新
                 RefreshTreeNode();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"フォルダの作成に失敗しました: {ex.Message}", "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(string.Format(Localization.Get("msg.createfolderfailed"), ex.Message), Localization.Get("msg.error"), MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
         private void ToggleTreeExpand()
         {
-            var node = _folderTree.SelectedNode;
+            var tree = _isBookshelfMode ? _bookshelfTree : _folderTree;
+            var node = tree.SelectedNode;
             if (node == null) return;
             if (node.IsExpanded)
                 node.Collapse();

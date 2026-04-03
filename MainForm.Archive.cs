@@ -7,27 +7,33 @@ namespace leeyez_kai
 {
     public partial class MainForm
     {
-        /// <summary>書庫エントリをキャッシュ付きで取得（LRU上限あり）</summary>
+        /// <summary>書庫エントリをキャッシュ付きで取得（LRU上限あり、スレッドセーフ）</summary>
         private List<ArchiveEntryInfo> GetArchiveEntries(string archivePath)
         {
-            if (_archiveEntryCache.TryGetValue(archivePath, out var cached))
+            lock (_archiveEntryCacheLock)
             {
-                _archiveEntryCacheOrder.Remove(archivePath);
-                _archiveEntryCacheOrder.Add(archivePath);
-                return cached;
+                if (_archiveEntryCache.TryGetValue(archivePath, out var cached))
+                {
+                    _archiveEntryCacheOrder.Remove(archivePath);
+                    _archiveEntryCacheOrder.Add(archivePath);
+                    return cached;
+                }
             }
 
             var entries = ArchiveService.GetEntries(archivePath, _sevenZipLibPath);
 
-            while (_archiveEntryCacheOrder.Count >= MaxArchiveEntryCacheSize)
+            lock (_archiveEntryCacheLock)
             {
-                var oldest = _archiveEntryCacheOrder[0];
-                _archiveEntryCacheOrder.RemoveAt(0);
-                _archiveEntryCache.Remove(oldest);
-            }
+                while (_archiveEntryCacheOrder.Count >= MaxArchiveEntryCacheSize)
+                {
+                    var oldest = _archiveEntryCacheOrder[0];
+                    _archiveEntryCacheOrder.RemoveAt(0);
+                    _archiveEntryCache.Remove(oldest);
+                }
 
-            _archiveEntryCache[archivePath] = entries;
-            _archiveEntryCacheOrder.Add(archivePath);
+                _archiveEntryCache[archivePath] = entries;
+                _archiveEntryCacheOrder.Add(archivePath);
+            }
             return entries;
         }
 
@@ -72,7 +78,10 @@ namespace leeyez_kai
                 UpdateNavButtons();
                 AutoSaveState();
                 LoadArchive(archivePath, "");
-                if (!_skipSelectPath) _treeManager?.SelectPath(archivePath);
+                if (_isBookshelfMode)
+                    SelectBookshelfNode(archivePath);
+                else if (!_skipSelectPath)
+                    _treeManager?.SelectPath(archivePath);
                 ShowFirstArchiveImage(autoSave: true);
             }
             finally { _isNavigating = false; }

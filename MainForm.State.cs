@@ -15,6 +15,9 @@ namespace leeyez_kai
     {
         private System.Windows.Forms.Timer? _autoSaveTimer;
         private AppState? _savedState;
+        private string? _lastSavedPath;
+        private string? _lastSavedFile;
+        private int _lastSavedIndex = -1;
 
         private void AutoSaveState()
         {
@@ -38,6 +41,13 @@ namespace leeyez_kai
                     lastViewingFile = _viewableFiles[_currentFileIndex].FullPath;
                     lastFileIndex = _currentFileIndex;
                 }
+
+                // 変化がなければスキップ
+                if (_nav.CurrentPath == _lastSavedPath && lastViewingFile == _lastSavedFile && lastFileIndex == _lastSavedIndex)
+                    return;
+                _lastSavedPath = _nav.CurrentPath;
+                _lastSavedFile = lastViewingFile;
+                _lastSavedIndex = lastFileIndex;
 
                 var bounds = WindowState == FormWindowState.Normal
                     ? new Rectangle(Left, Top, Width, Height)

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using leeyez_kai.i18n;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using SkiaSharp;
@@ -112,7 +113,10 @@ namespace leeyez_kai
             // VirtualGridPanel対応
             if (_isGridMode && _virtualGrid.Visible)
             {
-                _virtualGrid.SelectByPath(item.FullPath);
+                var paths = new List<string> { item.FullPath };
+                if (GetPagesPerView() == 2 && index + 1 < _viewableFiles.Count)
+                    paths.Add(_viewableFiles[index + 1].FullPath);
+                _virtualGrid.SelectByPaths(paths);
                 return;
             }
 
@@ -231,10 +235,11 @@ namespace leeyez_kai
                 {
                     int nextIdx = _currentFileIndex + 1;
                     var file2 = _viewableFiles[nextIdx];
-                    Parallel.Invoke(() => LoadAndCacheImage(file), () => LoadAndCacheImage(file2));
+
+                    // キャッシュ済みなら同期で即表示
                     var bmp1 = _imageCache.Get(file.FullPath);
                     var bmp2 = _imageCache.Get(file2.FullPath);
-                    if (bmp1 != null || bmp2 != null)
+                    if (bmp1 != null && bmp2 != null)
                     {
                         _imageViewer.ShowSpread(
                             _isRTL ? bmp2 : bmp1,
@@ -243,8 +248,28 @@ namespace leeyez_kai
                         StartPrefetch();
                         return;
                     }
-                    // 両方nullなら前の表示を維持（1ページにフォールバックしない）
-                    // 非同期デコードが完了したらShowCurrentFileが再呼び出しされる
+
+                    // キャッシュミス: 非同期でデコードしてUIスレッドをブロックしない
+                    var savedIdx = _currentFileIndex;
+                    var t1 = Task.Run(() => LoadAndCacheImage(file));
+                    var t2 = Task.Run(() => LoadAndCacheImage(file2));
+                    Task.WhenAll(t1, t2).ContinueWith(_ =>
+                    {
+                        BeginInvoke(() =>
+                        {
+                            if (_currentFileIndex != savedIdx) return;
+                            var b1 = _imageCache.Get(file.FullPath);
+                            var b2 = _imageCache.Get(file2.FullPath);
+                            if (b1 != null || b2 != null)
+                            {
+                                _imageViewer.ShowSpread(
+                                    _isRTL ? b2 : b1,
+                                    _isRTL ? b1 : b2);
+                                _statusLeft.Text = file.FullPath;
+                                StartPrefetch();
+                            }
+                        });
+                    }, TaskScheduler.Default);
                     return;
                 }
 
@@ -391,8 +416,8 @@ namespace leeyez_kai
 
                     if (ct.IsCancellationRequested) return;
 
-                    // 4並列でデコード（マルチコア活用）
-                    Parallel.ForEach(targets, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, target =>
+                    // マルチコア活用でデコード
+                    Parallel.ForEach(targets, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount - 1), CancellationToken = ct }, target =>
                     {
                         if (ct.IsCancellationRequested) return;
                         try
@@ -539,14 +564,14 @@ namespace leeyez_kai
             if (split != null)
             {
                 // 書庫内の動画: バックグラウンドで一時ファイルに展開してから再生
-                _statusLeft.Text = "動画を展開中...";
+                _statusLeft.Text = Localization.Get("viewer.extracting");
                 var fileCopy = file;
                 Task.Run(() =>
                 {
                     try
                     {
                         var stream = GetFileStream(fileCopy);
-                        if (stream == null) { BeginInvoke(() => _statusLeft.Text = "展開に失敗しました"); return; }
+                        if (stream == null) { BeginInvoke(() => _statusLeft.Text = Localization.Get("viewer.extractfailed")); return; }
 
                         var tempDir = Path.Combine(Path.GetTempPath(), "leeyez_media");
                         Directory.CreateDirectory(tempDir);
@@ -565,7 +590,7 @@ namespace leeyez_kai
                     }
                     catch (Exception ex)
                     {
-                        BeginInvoke(() => _statusLeft.Text = $"展開失敗: {ex.Message}");
+                        BeginInvoke(() => _statusLeft.Text = $"{Localization.Get("viewer.extractfailed")}: {ex.Message}");
                     }
                 });
                 return;
@@ -588,10 +613,20 @@ namespace leeyez_kai
 
         private (int w, int h) GetMaxDecodeSize()
         {
-            // 表示サイズの2倍でデコード（ズーム200%まで劣化なし、メモリ節約）
-            int w = _imageViewer.Width > 0 ? _imageViewer.Width * 2 : AppConstants.MaxDecodeWidth;
-            int h = _imageViewer.Height > 0 ? _imageViewer.Height * 2 : AppConstants.MaxDecodeHeight;
-            return (Math.Min(w, AppConstants.MaxDecodeWidth), Math.Min(h, AppConstants.MaxDecodeHeight));
+            if (_imageViewer.CurrentScaleMode == ImageViewer.ScaleMode.Original)
+            {
+                // 原寸モード: 最大解像度でデコード
+                int w = _imageViewer.Width > 0 ? _imageViewer.Width * 2 : AppConstants.MaxDecodeWidth;
+                int h = _imageViewer.Height > 0 ? _imageViewer.Height * 2 : AppConstants.MaxDecodeHeight;
+                return (Math.Min(w, AppConstants.MaxDecodeWidth), Math.Min(h, AppConstants.MaxDecodeHeight));
+            }
+            else
+            {
+                // FitWindow等: 1.5倍（ズーム150%まで劣化なし、メモリ節約）
+                int w = _imageViewer.Width > 0 ? _imageViewer.Width * 3 / 2 : AppConstants.MaxDecodeWidth;
+                int h = _imageViewer.Height > 0 ? _imageViewer.Height * 3 / 2 : AppConstants.MaxDecodeHeight;
+                return (Math.Min(w, AppConstants.MaxDecodeWidth), Math.Min(h, AppConstants.MaxDecodeHeight));
+            }
         }
 
         // ── ズーム ──

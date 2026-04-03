@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using leeyez_kai.i18n;
 
 namespace leeyez_kai.Models
 {
@@ -42,7 +43,7 @@ namespace leeyez_kai.Models
                 IsDirectory = false,
             };
             item.IsArchiveFile = item.IsArchiveExt;
-            item.DisplayType = string.IsNullOrEmpty(item.Ext) ? "ファイル" : item.Ext.TrimStart('.').ToUpperInvariant();
+            item.DisplayType = string.IsNullOrEmpty(item.Ext) ? i18n.Localization.Get("file.file") : item.Ext.TrimStart('.').ToUpperInvariant();
             return item;
         }
 
@@ -56,7 +57,7 @@ namespace leeyez_kai.Models
                 LastModified = di.LastWriteTime,
                 IsDirectory = true,
                 IsArchiveFile = false,
-                DisplayType = "フォルダ"
+                DisplayType = i18n.Localization.Get("file.folder")
             };
         }
     }

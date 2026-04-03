@@ -16,6 +16,8 @@ namespace leeyez_kai.Models
         public int HoverPreviewSize { get; set; } = 320;
         public int SidebarFontSize { get; set; } = 9;
         public string Language { get; set; } = "ja";
+        public string TreeSortMode { get; set; } = "Name";
+        public bool TreeSortDescending { get; set; } = false;
 
         private static readonly string FilePath = AppPaths.GetPath("settings.json");
 

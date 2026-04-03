@@ -5,9 +5,12 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using leeyez_kai.i18n;
 
 namespace leeyez_kai.Services
 {
+    public enum TreeSortMode { Name, LastModified, Size, Type }
+
     /// <summary>
     /// TreeViewのフォルダツリー管理
     /// </summary>
@@ -29,18 +32,23 @@ namespace leeyez_kai.Services
         public bool SuppressSelect { get => _suppressSelect; set => _suppressSelect = value; }
         private readonly HashSet<string> _registeredIconKeys = new();
 
+        private TreeSortMode _sortMode = TreeSortMode.Name;
+        private bool _sortDescending = false;
+        public TreeSortMode SortMode => _sortMode;
+        public bool SortDescending => _sortDescending;
+
         public event Action<string>? FolderSelected;
         public event Action<List<string>>? FavoritesChanged;
 
-        // 特殊フォルダ定義
-        private static readonly (string Name, Environment.SpecialFolder Folder)[] KnownFolders = new[]
+        // 特殊フォルダ定義（NameKeyはLocalizationキー）
+        private static readonly (string NameKey, Environment.SpecialFolder Folder)[] KnownFolders = new[]
         {
-            ("デスクトップ", Environment.SpecialFolder.DesktopDirectory),
-            ("ダウンロード", (Environment.SpecialFolder)(-1)), // 特殊処理
-            ("ドキュメント", Environment.SpecialFolder.MyDocuments),
-            ("ピクチャ",     Environment.SpecialFolder.MyPictures),
-            ("ビデオ",       Environment.SpecialFolder.MyVideos),
-            ("ミュージック", Environment.SpecialFolder.MyMusic),
+            ("folder.desktop",   Environment.SpecialFolder.DesktopDirectory),
+            ("folder.downloads", (Environment.SpecialFolder)(-1)), // 特殊処理
+            ("folder.documents", Environment.SpecialFolder.MyDocuments),
+            ("folder.pictures",  Environment.SpecialFolder.MyPictures),
+            ("folder.videos",    Environment.SpecialFolder.MyVideos),
+            ("folder.music",     Environment.SpecialFolder.MyMusic),
         };
 
         public FolderTreeManager(TreeView treeView)
@@ -114,12 +122,11 @@ namespace leeyez_kai.Services
             AddFavorites(favorites);
 
             // 2. 特殊フォルダ (デスクトップ, ダウンロード, ドキュメント, ピクチャ, ビデオ, ミュージック)
-            foreach (var (name, folder) in KnownFolders)
+            foreach (var (nameKey, folder) in KnownFolders)
             {
                 string path;
                 if ((int)folder == -1)
                 {
-                    // ダウンロードフォルダ
                     path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
                 }
                 else
@@ -129,7 +136,7 @@ namespace leeyez_kai.Services
 
                 if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) continue;
 
-                var node = CreateFolderNode(name, path);
+                var node = CreateFolderNode(Localization.Get(nameKey), path);
                 // 実際のフォルダアイコンを取得
                 SetNodeIcon(node, path);
                 _treeView.Nodes.Add(node);
@@ -143,7 +150,7 @@ namespace leeyez_kai.Services
 
         private void AddFavorites(List<string> favorites)
         {
-            var favNode = new TreeNode("お気に入り")
+            var favNode = new TreeNode(Localization.Get("sidebar.favorites"))
             {
                 Tag = "FAVORITES",
                 ImageKey = "heart",
@@ -176,7 +183,7 @@ namespace leeyez_kai.Services
 
             // 子がなくても展開ボタンを表示するためダミーを追加
             if (favNode.Nodes.Count == 0)
-                favNode.Nodes.Add(new TreeNode("(なし)") { ForeColor = Color.Gray, Tag = "DUMMY_EMPTY" });
+                favNode.Nodes.Add(new TreeNode(Localization.Get("sidebar.empty")) { ForeColor = Color.Gray, Tag = "DUMMY_EMPTY" });
 
             _treeView.Nodes.Add(favNode);
             favNode.Expand();
@@ -186,7 +193,7 @@ namespace leeyez_kai.Services
         {
             // PCノード
             var pcKey = _imageList.Images.ContainsKey("pc") ? "pc" : "folder";
-            var pcNode = new TreeNode("PC")
+            var pcNode = new TreeNode(Localization.Get("sidebar.pc"))
             {
                 Tag = "PC",
                 ImageKey = pcKey,
@@ -692,16 +699,170 @@ namespace leeyez_kai.Services
                         });
                     }
 
-                    // 名前順ソートしてまとめて追加
-                    dirNodes.Sort((a, b) => string.Compare(a.Text, b.Text, StringComparison.OrdinalIgnoreCase));
-                    archiveNodes.Sort((a, b) => string.Compare(a.Text, b.Text, StringComparison.OrdinalIgnoreCase));
-
-                    node.Nodes.AddRange(dirNodes.ToArray());
-                    node.Nodes.AddRange(archiveNodes.ToArray());
+                    var sorted = SortNodeLists(dirNodes, archiveNodes);
+                    node.Nodes.AddRange(sorted.ToArray());
                 }
                 catch (UnauthorizedAccessException) { }
                 catch (IOException) { }
             }
+        }
+
+        private List<TreeNode> SortNodeLists(List<TreeNode> dirNodes, List<TreeNode> archiveNodes)
+        {
+            Comparison<TreeNode> comparison = _sortMode switch
+            {
+                TreeSortMode.LastModified => (a, b) =>
+                {
+                    var pathA = a.Tag?.ToString();
+                    var pathB = b.Tag?.ToString();
+                    if (pathA == null || pathB == null) return 0;
+                    try
+                    {
+                        var timeA = Directory.Exists(pathA)
+                            ? Directory.GetLastWriteTime(pathA)
+                            : File.GetLastWriteTime(pathA);
+                        var timeB = Directory.Exists(pathB)
+                            ? Directory.GetLastWriteTime(pathB)
+                            : File.GetLastWriteTime(pathB);
+                        return timeA.CompareTo(timeB);
+                    }
+                    catch { return 0; }
+                },
+                TreeSortMode.Size => (a, b) =>
+                {
+                    var pathA = a.Tag?.ToString();
+                    var pathB = b.Tag?.ToString();
+                    if (pathA == null || pathB == null) return 0;
+                    try
+                    {
+                        var sizeA = File.Exists(pathA) ? new FileInfo(pathA).Length : 0L;
+                        var sizeB = File.Exists(pathB) ? new FileInfo(pathB).Length : 0L;
+                        return sizeA.CompareTo(sizeB);
+                    }
+                    catch { return 0; }
+                },
+                TreeSortMode.Type => (a, b) =>
+                {
+                    var extA = Path.GetExtension(a.Text).ToLowerInvariant();
+                    var extB = Path.GetExtension(b.Text).ToLowerInvariant();
+                    var cmp = string.Compare(extA, extB, StringComparison.OrdinalIgnoreCase);
+                    return cmp != 0 ? cmp : string.Compare(a.Text, b.Text, StringComparison.OrdinalIgnoreCase);
+                },
+                _ => (a, b) => string.Compare(a.Text, b.Text, StringComparison.OrdinalIgnoreCase)
+            };
+
+            if (_sortDescending)
+            {
+                var orig = comparison;
+                comparison = (a, b) => orig(b, a);
+            }
+
+            // 名前・種類はフォルダ上固定、更新日時・サイズは混合ソート
+            if (_sortMode == TreeSortMode.LastModified || _sortMode == TreeSortMode.Size)
+            {
+                var all = new List<TreeNode>(dirNodes.Count + archiveNodes.Count);
+                all.AddRange(dirNodes);
+                all.AddRange(archiveNodes);
+                all.Sort(comparison);
+                return all;
+            }
+
+            dirNodes.Sort(comparison);
+            archiveNodes.Sort(comparison);
+            var result = new List<TreeNode>(dirNodes.Count + archiveNodes.Count);
+            result.AddRange(dirNodes);
+            result.AddRange(archiveNodes);
+            return result;
+        }
+
+        public void SetSortMode(TreeSortMode mode, bool descending)
+        {
+            if (_sortMode == mode && _sortDescending == descending) return;
+            _sortMode = mode;
+            _sortDescending = descending;
+            ResortExpandedNodes();
+        }
+
+        private void ResortExpandedNodes()
+        {
+            var selectedTag = _treeView.SelectedNode?.Tag?.ToString();
+            _treeView.BeginUpdate();
+            try
+            {
+                foreach (TreeNode root in _treeView.Nodes)
+                    ResortNodeRecursive(root);
+            }
+            finally { _treeView.EndUpdate(); }
+
+            // 選択ノードの復元
+            if (selectedTag != null)
+            {
+                var found = FindNodeByTag(_treeView.Nodes, selectedTag);
+                if (found != null)
+                {
+                    _suppressSelect = true;
+                    _treeView.SelectedNode = found;
+                    _suppressSelect = false;
+                }
+            }
+        }
+
+        private void ResortNodeRecursive(TreeNode node)
+        {
+            var tag = node.Tag?.ToString();
+            if (tag == "FAVORITES" || tag == "PC") return;
+
+            if (node.IsExpanded && node.Nodes.Count > 0
+                && node.Nodes[0].Tag?.ToString() != "DUMMY"
+                && node.Nodes[0].Tag?.ToString() != "DUMMY_EMPTY")
+            {
+                SortChildNodes(node);
+                foreach (TreeNode child in node.Nodes)
+                    ResortNodeRecursive(child);
+            }
+        }
+
+        private void SortChildNodes(TreeNode parentNode)
+        {
+            var dirNodes = new List<TreeNode>();
+            var archiveNodes = new List<TreeNode>();
+            var expandedTags = new HashSet<string>();
+
+            foreach (TreeNode child in parentNode.Nodes)
+            {
+                var childTag = child.Tag?.ToString();
+                if (childTag == "DUMMY" || childTag == "DUMMY_EMPTY") continue;
+                if (child.IsExpanded && childTag != null)
+                    expandedTags.Add(childTag);
+                if (childTag != null && Directory.Exists(childTag))
+                    dirNodes.Add(child);
+                else
+                    archiveNodes.Add(child);
+            }
+
+            var sorted = SortNodeLists(dirNodes, archiveNodes);
+
+            parentNode.Nodes.Clear();
+            parentNode.Nodes.AddRange(sorted.ToArray());
+
+            // 展開状態の復元
+            foreach (TreeNode child in parentNode.Nodes)
+            {
+                var childTag = child.Tag?.ToString();
+                if (childTag != null && expandedTags.Contains(childTag))
+                    child.Expand();
+            }
+        }
+
+        private static TreeNode? FindNodeByTag(TreeNodeCollection nodes, string tag)
+        {
+            foreach (TreeNode node in nodes)
+            {
+                if (node.Tag?.ToString() == tag) return node;
+                var found = FindNodeByTag(node.Nodes, tag);
+                if (found != null) return found;
+            }
+            return null;
         }
 
         private void TreeView_AfterSelect(object? sender, TreeViewEventArgs e)
@@ -753,7 +914,7 @@ namespace leeyez_kai.Services
             {
                 e.CancelEdit = true;
                 System.Windows.Forms.MessageBox.Show(
-                    $"名前の変更に失敗しました: {ex.Message}", "エラー",
+                    string.Format(Localization.Get("msg.renamefailed"), ex.Message), Localization.Get("msg.error"),
                     System.Windows.Forms.MessageBoxButtons.OK,
                     System.Windows.Forms.MessageBoxIcon.Error);
             }
@@ -841,7 +1002,7 @@ namespace leeyez_kai.Services
             }
 
             if (favNode.Nodes.Count == 0)
-                favNode.Nodes.Add(new TreeNode("(なし)") { ForeColor = Color.Gray, Tag = "DUMMY_EMPTY" });
+                favNode.Nodes.Add(new TreeNode(Localization.Get("sidebar.empty")) { ForeColor = Color.Gray, Tag = "DUMMY_EMPTY" });
 
             SaveFavorites();
         }

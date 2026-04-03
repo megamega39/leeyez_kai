@@ -15,6 +15,18 @@ namespace leeyez_kai
 {
     public partial class MainForm : Form
     {
+        // ── 共有フォント（重複生成回避） ──
+        private static readonly Font _fontUI8 = new("Yu Gothic UI", 8f);
+        private static readonly Font _fontUI85 = new("Yu Gothic UI", 8.5f);
+        private static readonly Font _fontUI9 = new("Yu Gothic UI", 9f);
+        private static readonly Font _fontUI10 = new("Yu Gothic UI", 10f);
+        private static readonly Font _fontUI10B = new("Yu Gothic UI", 10f, FontStyle.Bold);
+        private static readonly Font _fontUI15B = new("Yu Gothic UI", 15f, FontStyle.Bold);
+        private static readonly Font _fontSegoe10 = new("Segoe UI", 10f);
+        private Font _fontIcon9 = null!;
+        private Font _fontIcon10 = null!;
+        private Font _fontIcon18 = null!;
+
         // ── サービス ──
         private readonly NavigationManager _nav = new();
         private readonly ImageCache _imageCache;
@@ -28,6 +40,7 @@ namespace leeyez_kai
         private string? _currentArchivePath;
         private readonly Dictionary<string, List<ArchiveEntryInfo>> _archiveEntryCache = new();
         private readonly List<string> _archiveEntryCacheOrder = new();
+        private readonly object _archiveEntryCacheLock = new();
         private const int MaxArchiveEntryCacheSize = 20;
         // 書庫内ファイルのStreamキャッシュ（展開済みバイト列、LRU管理）
         private readonly object _streamCacheLock = new();
@@ -105,9 +118,12 @@ namespace leeyez_kai
         private readonly BookshelfService _bookshelfService = new();
         private TreeView _bookshelfTree = null!;
         private bool _isBookshelfMode;
+        private bool _bookshelfDirty;
         private ToolStripButton _btnBookshelf = null!;
         private Label _sidebarLabel = null!;
         private Panel _bookshelfToolbar = null!;
+        private Button _treeSortBtn = null!;
+        private ContextMenuStrip _treeSortMenu = null!;
 
         // 履歴ボタン（フィールドはMainForm.History.csで定義）
         private ToolStripButton _btnHistory = null!;
@@ -119,6 +135,7 @@ namespace leeyez_kai
 
             // メモリ上限からキャッシュ枚数を計算（1枚≒4MB）
             _imageCache = new ImageCache(Math.Max(16, _appSettings.MemoryLimitMB / 4));
+            _imageCache.SetMaxBytes((long)_appSettings.MemoryLimitMB * 1024 * 1024);
 
             InitializeComponent();
             SetupSevenZipPath();
@@ -137,14 +154,34 @@ namespace leeyez_kai
             BeginInvoke(() => LoadState());
         }
 
+        private void ApplyTreeSort(TreeSortMode mode)
+        {
+            if (_treeManager == null) return;
+            bool desc = _treeManager.SortMode == mode ? !_treeManager.SortDescending : false;
+            _treeManager.SetSortMode(mode, desc);
+            _appSettings.TreeSortMode = mode.ToString();
+            _appSettings.TreeSortDescending = desc;
+            _appSettings.Save();
+        }
+
+        private void ApplyTreeSortDirection(bool descending)
+        {
+            if (_treeManager == null) return;
+            _treeManager.SetSortMode(_treeManager.SortMode, descending);
+            _appSettings.TreeSortDescending = descending;
+            _appSettings.Save();
+        }
+
         private void SetupServices()
         {
             _treeManager = new FolderTreeManager(_folderTree);
+            if (Enum.TryParse<TreeSortMode>(_appSettings.TreeSortMode, out var treeSortMode))
+                _treeManager.SetSortMode(treeSortMode, _appSettings.TreeSortDescending);
             _treeManager.FolderSelected += (path) =>
             {
                 if (_isNavigating) return;
-                // お気に入り配下からの選択ならSelectPathをスキップ
-                _skipSelectPath = _treeManager.IsSelectedUnderFavorites();
+                // ツリーからの選択時は再度SelectPathを呼ぶ必要なし
+                _skipSelectPath = true;
                 NavigateTo(path);
                 _skipSelectPath = false;
             };
@@ -187,6 +224,10 @@ namespace leeyez_kai
 
             _virtualGrid.ItemSelected += OnFileSelected;
             _virtualGrid.ItemDoubleClicked += OnFileDoubleClicked;
+            _virtualGrid.ItemRightClicked += (item, screenPt) =>
+            {
+                _fileList.ContextMenuStrip?.Show(screenPt);
+            };
 
             _bookshelfService.Load();
             _historyService.Load();
@@ -261,14 +302,17 @@ namespace leeyez_kai
                     ApplyLanguageToUI();
                 // 設定を適用（古いFontをDisposeしてからセット）
                 var newFont = new System.Drawing.Font("Yu Gothic UI", _appSettings.SidebarFontSize);
-                var oldFont = _folderTree.Font;
+                var oldFonts = new HashSet<Font> { _folderTree.Font, _fileList.Font, _bookshelfTree.Font, _historyList.Font };
                 _folderTree.Font = newFont;
                 _fileList.Font = newFont;
                 _bookshelfTree.Font = newFont;
                 _historyList.Font = newFont;
-                if (oldFont != null && oldFont != newFont) oldFont.Dispose();
+                foreach (var f in oldFonts)
+                    if (f != null && f != newFont) f.Dispose();
                 _fileListManager!.RecursiveMode = _appSettings.RecursiveMedia;
                 _imageCache.SetMaxEntries(Math.Max(16, _appSettings.MemoryLimitMB / 4));
+                _imageCache.SetMaxBytes((long)_appSettings.MemoryLimitMB * 1024 * 1024);
+                _virtualGrid.SetThumbnailSize(_appSettings.ThumbnailSize);
                 // 再読み込み
                 if (!string.IsNullOrEmpty(_nav.CurrentPath))
                     Refresh();
@@ -306,6 +350,14 @@ namespace leeyez_kai
             _historyLabel.Text = i18n.Localization.Get("history.label");
             _historyBtnClear.Text = i18n.Localization.Get("history.clear");
 
+            // ツリーソートメニュー
+            _treeSortMenu.Items[0].Text = i18n.Localization.Get("sort.name");
+            _treeSortMenu.Items[1].Text = i18n.Localization.Get("sort.modified");
+            _treeSortMenu.Items[2].Text = i18n.Localization.Get("sort.size");
+            _treeSortMenu.Items[3].Text = i18n.Localization.Get("sort.type");
+            _treeSortMenu.Items[5].Text = i18n.Localization.Get("sort.asc");
+            _treeSortMenu.Items[6].Text = i18n.Localization.Get("sort.desc");
+
             // 履歴コンテキストメニュー再構築
             if (_historyList.ContextMenuStrip != null)
             {
@@ -319,6 +371,61 @@ namespace leeyez_kai
                 ctx.Items.Add(i18n.Localization.Get("ctx.addshelf"), null, (s, e) => AddHistoryToBookshelf());
                 ctx.Items.Add(new ToolStripSeparator());
                 ctx.Items.Add(i18n.Localization.Get("history.deleteentry"), null, (s, e) => DeleteHistoryEntry());
+            }
+
+            // ビューアコンテキストメニュー
+            if (_imageViewer.ContextMenuStrip != null)
+            {
+                var ctx = _imageViewer.ContextMenuStrip;
+                ctx.Items[0].Text = i18n.Localization.Get("menu.fullscreen");
+                ctx.Items[1].Text = i18n.Localization.Get("menu.openwith");
+                ctx.Items[2].Text = i18n.Localization.Get("menu.copypath");
+                ctx.Items[3].Text = i18n.Localization.Get("menu.copyparentpath");
+                ctx.Items[4].Text = i18n.Localization.Get("menu.openexplorer");
+            }
+
+            // ファイルリストコンテキストメニュー
+            if (_fileList.ContextMenuStrip != null)
+            {
+                var ctx = _fileList.ContextMenuStrip;
+                ctx.Items[0].Text = i18n.Localization.Get("menu.openwith");
+                ctx.Items[1].Text = i18n.Localization.Get("menu.openexplorer");
+                ctx.Items[2].Text = i18n.Localization.Get("menu.copypath");
+                ctx.Items[3].Text = i18n.Localization.Get("menu.copyfilename");
+                // [4] separator
+                ctx.Items[5].Text = i18n.Localization.Get("menu.addfavorite");
+                ctx.Items[6].Text = i18n.Localization.Get("menu.addbookshelf");
+                // [7] separator
+                ctx.Items[8].Text = i18n.Localization.Get("menu.rename");
+                ctx.Items[9].Text = i18n.Localization.Get("menu.delete");
+            }
+
+            // ツリーコンテキストメニュー
+            if (_folderTree.ContextMenuStrip != null)
+            {
+                var ctx = _folderTree.ContextMenuStrip;
+                ctx.Items[0].Text = i18n.Localization.Get("menu.openwith");
+                ctx.Items[1].Text = i18n.Localization.Get("menu.openexplorer");
+                ctx.Items[2].Text = i18n.Localization.Get("menu.copypath");
+                // [3] separator
+                ctx.Items[4].Text = i18n.Localization.Get("menu.addfavorite");
+                ctx.Items[5].Text = i18n.Localization.Get("menu.removefavorite");
+                ctx.Items[6].Text = i18n.Localization.Get("menu.addbookshelf");
+                // [7] separator
+                ctx.Items[8].Text = i18n.Localization.Get("menu.rename");
+                ctx.Items[9].Text = i18n.Localization.Get("menu.delete");
+            }
+
+            // 本棚コンテキストメニュー
+            if (_bookshelfTree.ContextMenuStrip != null)
+            {
+                var ctx = _bookshelfTree.ContextMenuStrip;
+                ctx.Items[0].Text = i18n.Localization.Get("menu.open");
+                ctx.Items[1].Text = i18n.Localization.Get("menu.openwith");
+                ctx.Items[2].Text = i18n.Localization.Get("menu.openexplorer");
+                // [3] separator
+                ctx.Items[4].Text = i18n.Localization.Get("menu.rename");
+                ctx.Items[5].Text = i18n.Localization.Get("menu.removebookshelf");
             }
         }
 
@@ -346,7 +453,9 @@ namespace leeyez_kai
             _fileList.Visible = false;
             _virtualGrid.Visible = true;
             _virtualGrid.BringToFront();
+            _virtualGrid.SetThumbnailSize(_appSettings.ThumbnailSize);
             _virtualGrid.SetFileStreamProvider(GetFileStream);
+            _virtualGrid.SetThumbStreamProvider(GetThumbStream);
             RefreshGridItems();
         }
 
@@ -355,10 +464,51 @@ namespace leeyez_kai
         {
             if (!_isGridMode || !_virtualGrid.Visible) return;
             _virtualGrid.SetFileStreamProvider(GetFileStream);
+            _virtualGrid.SetThumbStreamProvider(GetThumbStream);
             if (_fileListManager != null)
                 _virtualGrid.SetItems(_fileListManager.Items);
             if (_currentFileIndex >= 0 && _currentFileIndex < _viewableFiles.Count)
                 _virtualGrid.SelectByPath(_viewableFiles[_currentFileIndex].FullPath);
+        }
+
+        private (Stream? stream, string ext) GetThumbStream(FileItem item)
+        {
+            if (item.IsImage)
+                return (GetFileStream(item), item.Ext);
+
+            if (item.IsArchiveExt && File.Exists(item.FullPath))
+            {
+                try
+                {
+                    var entries = GetArchiveEntries(item.FullPath);
+                    var firstImage = entries.FirstOrDefault(e => !e.IsFolder
+                        && FileExtensions.IsImage(FileExtensions.GetExt(e.FileName)));
+                    if (firstImage != null)
+                    {
+                        var stream = ArchiveService.GetEntryStream(item.FullPath, firstImage.FileName, _sevenZipLibPath);
+                        return (stream, FileExtensions.GetExt(firstImage.FileName));
+                    }
+                }
+                catch { }
+            }
+
+            if (item.IsDirectory && Directory.Exists(item.FullPath))
+            {
+                try
+                {
+                    string? firstImage = null;
+                    foreach (var pattern in new[] { "*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp", "*.gif", "*.avif" })
+                    {
+                        firstImage = Directory.EnumerateFiles(item.FullPath, pattern).FirstOrDefault();
+                        if (firstImage != null) break;
+                    }
+                    if (firstImage != null)
+                        return (new FileStream(firstImage, FileMode.Open, FileAccess.Read, FileShare.ReadWrite), FileExtensions.GetExt(firstImage));
+                }
+                catch { }
+            }
+
+            return (null, "");
         }
 
         // ── ヘルパー ──

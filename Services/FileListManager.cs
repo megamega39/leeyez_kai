@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using leeyez_kai.i18n;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using leeyez_kai.Models;
@@ -63,10 +64,10 @@ namespace leeyez_kai.Services
             _listView.BackColor = Color.FromArgb(0xEB, 0xF4, 0xFF);
 
             // カラム設定
-            _listView.Columns.Add("名前", 200);
-            _listView.Columns.Add("サイズ", 80, HorizontalAlignment.Right);
-            _listView.Columns.Add("種類", 80);
-            _listView.Columns.Add("更新日時", 130);
+            _listView.Columns.Add(Localization.Get("filelist.name"), 200);
+            _listView.Columns.Add(Localization.Get("filelist.size"), 80, HorizontalAlignment.Right);
+            _listView.Columns.Add(Localization.Get("filelist.type"), 80);
+            _listView.Columns.Add(Localization.Get("filelist.modified"), 130);
 
             _listView.ColumnClick += ListView_ColumnClick;
             _listView.SelectedIndexChanged += ListView_SelectedIndexChanged;
@@ -121,6 +122,26 @@ namespace leeyez_kai.Services
             }
             catch (UnauthorizedAccessException) { }
             catch (IOException) { }
+
+            ApplyFilterAndSort();
+        }
+
+        public void LoadPaths(IEnumerable<(string name, string path)> items)
+        {
+            _allItems.Clear();
+            _filter = string.Empty;
+
+            foreach (var (name, path) in items)
+            {
+                try
+                {
+                    if (File.Exists(path))
+                        _allItems.Add(FileItem.FromFileInfo(new FileInfo(path)));
+                    else if (Directory.Exists(path))
+                        _allItems.Add(FileItem.FromDirectoryInfo(new DirectoryInfo(path)));
+                }
+                catch { }
+            }
 
             ApplyFilterAndSort();
         }
@@ -200,20 +221,19 @@ namespace leeyez_kai.Services
             // ソート（名前ソート時のみフォルダ優先、それ以外は混在）
             Func<FileItem, IComparable> keySelector = _sortColumn switch
             {
-                "Size" or "サイズ" => f => f.Size,
-                "DisplayType" or "種類" => f => f.DisplayType,
-                "LastModified" or "更新日時" => f => f.LastModified,
+                "Size" => f => f.Size,
+                "DisplayType" => f => f.DisplayType,
+                "LastModified" => f => f.LastModified,
                 _ => f => f.Name
             };
 
             if (_sortColumn == "Name")
             {
-                // 名前ソートのみフォルダ優先
-                var dirs = _filteredItems.Where(f => f.IsDirectory);
-                var files = _filteredItems.Where(f => !f.IsDirectory);
-                dirs = _sortDescending ? dirs.OrderByDescending(keySelector) : dirs.OrderBy(keySelector);
-                files = _sortDescending ? files.OrderByDescending(keySelector) : files.OrderBy(keySelector);
-                _filteredItems = dirs.Concat(files).ToList();
+                // 名前ソートのみフォルダ優先（1パスで実行）
+                var ordered = _filteredItems.OrderBy(f => f.IsDirectory ? 0 : 1);
+                _filteredItems = (_sortDescending
+                    ? ordered.ThenByDescending(keySelector)
+                    : ordered.ThenBy(keySelector)).ToList();
             }
             else
             {
@@ -330,7 +350,7 @@ namespace leeyez_kai.Services
             {
                 e.CancelEdit = true;
                 System.Windows.Forms.MessageBox.Show(
-                    $"名前の変更に失敗しました: {ex.Message}", "エラー",
+                    string.Format(Localization.Get("msg.renamefailed"), ex.Message), Localization.Get("msg.error"),
                     System.Windows.Forms.MessageBoxButtons.OK,
                     System.Windows.Forms.MessageBoxIcon.Error);
             }

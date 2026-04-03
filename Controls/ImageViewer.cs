@@ -434,10 +434,17 @@ namespace leeyez_kai.Controls
                 totalW = drawW1 + drawW2;
             }
 
-            // 中央寄せ
-            int startX = (viewW - totalW) / 2;
-            int y1 = (viewH - drawH1) / 2;
-            int y2 = (viewH - drawH2) / 2;
+            // ズーム適用
+            drawW1 = (int)(drawW1 * _zoom);
+            drawH1 = (int)(drawH1 * _zoom);
+            drawW2 = (int)(drawW2 * _zoom);
+            drawH2 = (int)(drawH2 * _zoom);
+            totalW = drawW1 + drawW2;
+
+            // 中央寄せ + スクロールオフセット
+            int startX = (viewW - totalW) / 2 + (int)_scrollOffset.X;
+            int y1 = (viewH - drawH1) / 2 + (int)_scrollOffset.Y;
+            int y2 = (viewH - drawH2) / 2 + (int)_scrollOffset.Y;
 
             if (_spreadDisplay1 != null)
                 BlitBitmap(e.Graphics, _spreadDisplay1, new RectangleF(startX, y1, drawW1, drawH1));
