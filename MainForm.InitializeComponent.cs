@@ -316,8 +316,8 @@ namespace leeyez_kai
             });
 
             _btnFirst.Click += (s, e) => GoToFile(0);
-            _btnPrev.Click += (s, e) => GoToFile(_currentFileIndex - GetPagesPerView());
-            _btnNext.Click += (s, e) => GoToFile(_currentFileIndex + GetPagesPerView());
+            _btnPrev.Click += (s, e) => GoToFile(_currentFileIndex - 1);
+            _btnNext.Click += (s, e) => GoToFile(_currentFileIndex + 1);
             _btnLast.Click += (s, e) => GoToFile(_viewableFiles.Count - 1);
             _btnFitWindow.Click += (s, e) => SetScaleMode(ImageViewer.ScaleMode.FitWindow);
             _btnFitWidth.Click += (s, e) => SetScaleMode(ImageViewer.ScaleMode.FitWidth);
